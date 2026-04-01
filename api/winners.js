@@ -6,11 +6,11 @@ export default async function handler(req, res) {
   const pcFilter = '(PC=79340000 OR PC=79400000 OR PC=79410000 OR PC=79416000)';
 
   const bodyVariants = [
-    // 1: Belgian award notices for communication/consulting CPV — recent
+    // 1: Belgian award notices for communication/consulting CPV — 2025
     {
       query: q
-        ? `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20240601 AND "${q}"`
-        : `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20240601`,
+        ? `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`
+        : `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20250101`,
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
@@ -18,11 +18,11 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: All EU award notices for communication CPV
+    // 2: All EU award notices for communication CPV — 2025
     {
       query: q
-        ? `notice-type=can-standard AND ${pcFilter} AND "${q}"`
-        : `notice-type=can-standard AND ${pcFilter} AND PD>20240101`,
+        ? `notice-type=can-standard AND ${pcFilter} AND PD>20250101 AND "${q}"`
+        : `notice-type=can-standard AND ${pcFilter} AND PD>20250101`,
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
@@ -30,10 +30,10 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Belgian award notices — recent
+    // 3: Belgian award notices — 2025
     {
       query: q
-        ? `notice-type=can-standard AND organisation-country-buyer IN (BEL) AND "${q}"`
+        ? `notice-type=can-standard AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`
         : 'notice-type=can-standard AND organisation-country-buyer IN (BEL) AND PD>20250101',
       fields: safeFields,
       limit: 20,

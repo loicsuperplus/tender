@@ -7,11 +7,11 @@ export default async function handler(req, res) {
   const pcFilter = '(PC=79340000 OR PC=79341000 OR PC=79342000 OR PC=79400000 OR PC=79410000 OR PC=79411000 OR PC=79416000 OR PC=79950000)';
 
   const bodyVariants = [
-    // 1: Belgian communication/consulting CPV — BEST query — recent
+    // 1: Belgian communication/consulting CPV — 2025 only, still open
     {
       query: q
-        ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20240601 AND "${q}"`
-        : `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20240601`,
+        ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`
+        : `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20250101`,
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -19,9 +19,9 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: All EU communication/consulting CPV (fallback if no Belgian results)
+    // 2: All EU communication/consulting CPV — 2025, still open
     {
-      query: q ? `${pcFilter} AND "${q}"` : `${pcFilter} AND PD>20250101`,
+      query: q ? `${pcFilter} AND PD>20250101 AND "${q}"` : `${pcFilter} AND PD>20250101`,
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -29,14 +29,14 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Belgian services recent (broadest fallback)
+    // 3: Belgian services 2025 still open (broadest fallback)
     {
       query: q
         ? `NC=services AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`
         : 'NC=services AND organisation-country-buyer IN (BEL) AND PD>20250101',
       fields: safeFields,
       limit: 20,
-      scope: 'ALL',
+      scope: 'ACTIVE',
       checkQuerySyntax: false,
     },
   ];
