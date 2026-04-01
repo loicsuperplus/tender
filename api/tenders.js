@@ -3,11 +3,11 @@ export default async function handler(req, res) {
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
   const safeFields = ['publication-number', 'notice-title', 'buyer-name'];
-  // Communication/marketing/consulting CPV codes using PC field with OR
+  // Communication/marketing/consulting CPV codes
   const pcFilter = '(PC=79340000 OR PC=79341000 OR PC=79342000 OR PC=79400000 OR PC=79410000 OR PC=79411000 OR PC=79416000 OR PC=79950000)';
 
   const bodyVariants = [
-    // 1: Belgian communication/consulting CPV — most relevant
+    // 1: Belgian communication/consulting CPV — BEST query
     {
       query: q
         ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND "${q}"`
@@ -19,9 +19,9 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: Communication/consulting CPV — all EU
+    // 2: All EU communication/consulting CPV (fallback if no Belgian results)
     {
-      query: q ? `${pcFilter} AND "${q}"` : pcFilter,
+      query: q ? `${pcFilter} AND "${q}"` : `${pcFilter} AND PD>20250101`,
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -29,19 +29,7 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Belgian services with communication keywords — recent
-    {
-      query: q
-        ? `NC=services AND organisation-country-buyer IN (BEL) AND PD>20240601 AND "${q}"`
-        : 'NC=services AND organisation-country-buyer IN (BEL) AND PD>20240601 AND (communication OR marketing OR publicité OR conseil OR consulting OR stratégie OR digital OR événement)',
-      fields: safeFields,
-      limit: 20,
-      scope: 'ALL',
-      paginationMode: 'PAGE_NUMBER',
-      page: 1,
-      checkQuerySyntax: false,
-    },
-    // 4: Belgian services — recent (broader)
+    // 3: Belgian services recent (broadest fallback)
     {
       query: q
         ? `NC=services AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`
@@ -51,20 +39,13 @@ export default async function handler(req, res) {
       scope: 'ALL',
       checkQuerySyntax: false,
     },
-    // 5: Belgian services — all time
-    {
-      query: 'NC=services AND organisation-country-buyer IN (BEL)',
-      fields: safeFields,
-      limit: 20,
-      scope: 'ACTIVE',
-      checkQuerySyntax: false,
-    },
   ];
-
-  const debugInfo = [];
 
   for (let i = 0; i < bodyVariants.length; i++) {
     try {
+      // Small delay between retries to avoid rate limiting
+      if (i > 0) await new Promise(r => setTimeout(r, 1500));
+
       const response = await fetch(TED_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -72,36 +53,40 @@ export default async function handler(req, res) {
         signal: AbortSignal.timeout(15000),
       });
 
-      let responseBody = '';
-      try { responseBody = await response.text(); } catch { responseBody = 'unreadable'; }
-
-      debugInfo.push({
-        variant: i + 1,
-        status: response.status,
-        query: bodyVariants[i].query,
-        responsePreview: responseBody.substring(0, 250),
-      });
+      // If rate limited, wait and retry same variant once
+      if (response.status === 429) {
+        await new Promise(r => setTimeout(r, 3000));
+        const retry = await fetch(TED_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(bodyVariants[i]),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (retry.ok) {
+          const data = await retry.json();
+          const notices = data.notices || [];
+          if (notices.length > 0) {
+            const tenders = notices.map((n, idx) => parseNotice(n, idx)).filter(Boolean);
+            return res.status(200).json({ tenders, total: data.totalNoticeCount || tenders.length, source: 'live' });
+          }
+        }
+        continue;
+      }
 
       if (response.ok) {
-        const data = JSON.parse(responseBody);
+        const data = await response.json();
         const notices = data.notices || [];
         if (Array.isArray(notices) && notices.length > 0) {
           const tenders = notices.map((n, idx) => parseNotice(n, idx)).filter(Boolean);
-          return res.status(200).json({
-            tenders,
-            total: data.totalNoticeCount || tenders.length,
-            source: 'live',
-            workingVariant: i + 1,
-            debug: debugInfo,
-          });
+          return res.status(200).json({ tenders, total: data.totalNoticeCount || tenders.length, source: 'live' });
         }
       }
     } catch (e) {
-      debugInfo.push({ variant: i + 1, error: e.message });
+      // Try next variant
     }
   }
 
-  return res.status(200).json({ tenders: [], total: 0, source: 'api_unavailable', debug: debugInfo });
+  return res.status(200).json({ tenders: [], total: 0, source: 'api_unavailable' });
 }
 
 function getLocalized(field) {
@@ -130,7 +115,6 @@ function parseNotice(notice, index) {
   const sector = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'relations publiques', 'agence créative'].some(k => allText.includes(k))
     ? 'Communication & campagnes' : 'Consulting & stratégie';
 
-  // Determine source based on title prefix (TED includes country)
   const isBelgian = allText.includes('belgique') || allText.includes('belgië');
   const source = isBelgian ? 'e-Procurement' : 'TED';
 

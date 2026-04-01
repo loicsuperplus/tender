@@ -20,7 +20,9 @@ export default async function handler(req, res) {
     },
     // 2: All EU award notices for communication CPV
     {
-      query: q ? `notice-type=can-standard AND ${pcFilter} AND "${q}"` : `notice-type=can-standard AND ${pcFilter}`,
+      query: q
+        ? `notice-type=can-standard AND ${pcFilter} AND "${q}"`
+        : `notice-type=can-standard AND ${pcFilter} AND PD>20240101`,
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
@@ -28,29 +30,11 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Belgian award notices with keywords — recent
+    // 3: Belgian award notices — recent
     {
       query: q
         ? `notice-type=can-standard AND organisation-country-buyer IN (BEL) AND "${q}"`
-        : 'notice-type=can-standard AND organisation-country-buyer IN (BEL) AND PD>20240601 AND (communication OR marketing OR consulting OR conseil)',
-      fields: safeFields,
-      limit: 20,
-      scope: 'ALL',
-      paginationMode: 'PAGE_NUMBER',
-      page: 1,
-      checkQuerySyntax: false,
-    },
-    // 4: Belgian award notices — recent
-    {
-      query: 'notice-type=can-standard AND organisation-country-buyer IN (BEL) AND PD>20250101',
-      fields: safeFields,
-      limit: 20,
-      scope: 'ALL',
-      checkQuerySyntax: false,
-    },
-    // 5: Broadest — Belgian award notices
-    {
-      query: 'notice-type=can-standard AND organisation-country-buyer IN (BEL)',
+        : 'notice-type=can-standard AND organisation-country-buyer IN (BEL) AND PD>20250101',
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
@@ -58,10 +42,10 @@ export default async function handler(req, res) {
     },
   ];
 
-  const debugInfo = [];
-
   for (let i = 0; i < bodyVariants.length; i++) {
     try {
+      if (i > 0) await new Promise(r => setTimeout(r, 1500));
+
       const response = await fetch(TED_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -69,36 +53,39 @@ export default async function handler(req, res) {
         signal: AbortSignal.timeout(15000),
       });
 
-      let responseBody = '';
-      try { responseBody = await response.text(); } catch { responseBody = 'unreadable'; }
-
-      debugInfo.push({
-        variant: i + 1,
-        status: response.status,
-        query: bodyVariants[i].query,
-        responsePreview: responseBody.substring(0, 250),
-      });
+      if (response.status === 429) {
+        await new Promise(r => setTimeout(r, 3000));
+        const retry = await fetch(TED_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(bodyVariants[i]),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (retry.ok) {
+          const data = await retry.json();
+          const notices = data.notices || [];
+          if (notices.length > 0) {
+            const winners = notices.map((n, idx) => parseAward(n, idx)).filter(Boolean);
+            return res.status(200).json({ winners, total: data.totalNoticeCount || winners.length, source: 'live' });
+          }
+        }
+        continue;
+      }
 
       if (response.ok) {
-        const data = JSON.parse(responseBody);
+        const data = await response.json();
         const notices = data.notices || [];
         if (Array.isArray(notices) && notices.length > 0) {
           const winners = notices.map((n, idx) => parseAward(n, idx)).filter(Boolean);
-          return res.status(200).json({
-            winners,
-            total: data.totalNoticeCount || winners.length,
-            source: 'live',
-            workingVariant: i + 1,
-            debug: debugInfo,
-          });
+          return res.status(200).json({ winners, total: data.totalNoticeCount || winners.length, source: 'live' });
         }
       }
     } catch (e) {
-      debugInfo.push({ variant: i + 1, error: e.message });
+      // Try next variant
     }
   }
 
-  return res.status(200).json({ winners: [], total: 0, source: 'api_unavailable', debug: debugInfo });
+  return res.status(200).json({ winners: [], total: 0, source: 'api_unavailable' });
 }
 
 function getLocalized(field) {
@@ -121,6 +108,9 @@ function parseAward(notice, index) {
   const title = getLocalized(notice['notice-title']);
   const authority = getLocalized(notice['buyer-name']);
 
+  const allText = `${title}`.toLowerCase();
+  const isBelgian = allText.includes('belgique') || allText.includes('belgië');
+
   return {
     id,
     name: authority || 'Non communiqué',
@@ -131,7 +121,7 @@ function parseAward(notice, index) {
     website: '',
     linkedin: '',
     email: '',
-    speciality: '',
+    speciality: isBelgian ? 'Marché public belge' : 'Marché public européen',
     collaborationScore: Math.floor(Math.random() * 30) + 60,
     noticeUrl: `https://ted.europa.eu/en/notice/-/detail/${id}`,
   };
