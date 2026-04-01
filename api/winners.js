@@ -10,7 +10,7 @@ export default async function handler(req, res) {
     // 1: Award notices for communication/consulting CPV codes
     {
       query: 'notice-type=can-standard AND cpv=(79340000 OR 79400000 OR 79410000 OR 79416000)',
-      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      fields: ['publication-number', 'notice-title', 'buyer-name', 'organisation-country-buyer'],
       limit: 20,
       scope: 'ALL',
       paginationMode: 'PAGE_NUMBER',
@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     // 2: Award notices for services
     {
       query: baseQuery,
-      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      fields: ['publication-number', 'notice-title', 'buyer-name', 'organisation-country-buyer'],
       limit: 20,
       scope: 'ALL',
       paginationMode: 'PAGE_NUMBER',
@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     // 3: Simplest fallback
     {
       query: 'notice-type=can-standard',
-      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      fields: ['publication-number', 'notice-title', 'buyer-name', 'organisation-country-buyer'],
       limit: 20,
       scope: 'ALL',
       checkQuerySyntax: false,

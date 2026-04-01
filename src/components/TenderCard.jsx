@@ -36,7 +36,9 @@ function StatusBadge({ status }) {
 }
 
 export default function TenderCard({ tender, index }) {
-  const daysLeft = Math.ceil((new Date(tender.deadline) - new Date()) / (1000 * 60 * 60 * 24));
+  const hasDeadline = tender.deadline && tender.deadline !== '' && !isNaN(new Date(tender.deadline).getTime());
+  const daysLeft = hasDeadline ? Math.ceil((new Date(tender.deadline) - new Date()) / (1000 * 60 * 60 * 24)) : null;
+  const hasBudget = tender.budget && tender.budget > 0;
 
   return (
     <div className={`animate-fade-in-up stagger-${index + 1} bg-white rounded-2xl border border-gray-100 p-6 shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5`}>
@@ -67,14 +69,24 @@ export default function TenderCard({ tender, index }) {
           <Building2 size={14} className="text-gray-400" />
           {tender.authority}
         </span>
-        <span className="inline-flex items-center gap-1.5">
-          <Euro size={14} className="text-gray-400" />
-          {tender.budget.toLocaleString('fr-BE')} €
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <Calendar size={14} className="text-gray-400" />
-          {new Date(tender.deadline).toLocaleDateString('fr-BE')} ({daysLeft > 0 ? `J-${daysLeft}` : 'Expiré'})
-        </span>
+        {hasBudget && (
+          <span className="inline-flex items-center gap-1.5">
+            <Euro size={14} className="text-gray-400" />
+            {tender.budget.toLocaleString('fr-BE')} €
+          </span>
+        )}
+        {hasDeadline && (
+          <span className="inline-flex items-center gap-1.5">
+            <Calendar size={14} className="text-gray-400" />
+            {new Date(tender.deadline).toLocaleDateString('fr-BE')} ({daysLeft > 0 ? `J-${daysLeft}` : 'Expiré'})
+          </span>
+        )}
+        {tender.published && (
+          <span className="inline-flex items-center gap-1.5">
+            <Calendar size={14} className="text-gray-400" />
+            Publié: {tender.published}
+          </span>
+        )}
         <span className="inline-flex items-center gap-1.5">
           <Tag size={14} className="text-gray-400" />
           {tender.sector}

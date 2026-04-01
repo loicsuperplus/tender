@@ -2,25 +2,26 @@ export default async function handler(req, res) {
   const { q = '' } = req.query;
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
-  // Use parentheses instead of brackets for CPV query syntax
+  // Use parentheses for CPV query syntax, sorted by recent publication
   const cpvQuery = 'cpv=(79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79411000 OR 79416000 OR 79950000)';
   const fullQuery = q ? `${cpvQuery} AND "${q}"` : cpvQuery;
+  const fields = ['publication-number', 'notice-title', 'buyer-name', 'organisation-country-buyer', 'deadline-receipt-tender-date-lot'];
 
   const bodyVariants = [
     // 1: CPV filter with validated field names
     {
       query: fullQuery,
-      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      fields,
       limit: 20,
       scope: 'ACTIVE',
       paginationMode: 'PAGE_NUMBER',
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: Broader — services category
+    // 2: Broader — services category with CPV
     {
       query: q ? `NC=services AND "${q}"` : 'NC=services AND cpv=(79340000 OR 79400000)',
-      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      fields,
       limit: 20,
       scope: 'ACTIVE',
       paginationMode: 'PAGE_NUMBER',
@@ -30,7 +31,7 @@ export default async function handler(req, res) {
     // 3: Fallback — just services
     {
       query: 'NC=services',
-      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      fields,
       limit: 20,
       scope: 'ACTIVE',
       checkQuerySyntax: false,
@@ -86,13 +87,22 @@ function parseNotice(notice, index) {
   const id = notice['publication-number'] || `ted-${index}`;
   const title = getLocalized(notice['notice-title']);
   const authority = getLocalized(notice['buyer-name']);
+  const country = getLocalized(notice['organisation-country-buyer']);
+  const deadline = notice['deadline-receipt-tender-date-lot'] || '';
 
-  const source = 'TED';
+  const source = (country === 'BEL' || country === 'BE') ? 'e-Procurement' : 'TED';
   const allText = `${title} ${authority}`.toLowerCase();
   const commKw = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'branding', 'consulting', 'conseil', 'stratégie', 'digital', 'audit'];
   const relevanceScore = Math.min(95, 50 + commKw.filter(k => allText.includes(k)).length * 7);
   const sector = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité'].some(k => allText.includes(k))
     ? 'Communication & campagnes' : 'Consulting & stratégie';
+
+  let status = 'open';
+  if (deadline) {
+    const dl = Math.ceil((new Date(deadline) - new Date()) / 86400000);
+    if (dl <= 7 && dl > 0) status = 'closing_soon';
+    if (dl <= 0) status = 'closed';
+  }
 
   return {
     id,
@@ -101,12 +111,12 @@ function parseNotice(notice, index) {
     source,
     sector,
     budget: 0,
-    deadline: '',
+    deadline: deadline || '',
     published: '',
     description: title || 'Description non disponible',
     keywords: [],
     relevanceScore,
-    status: 'open',
+    status,
     referenceNumber: id,
     url: `https://ted.europa.eu/en/notice/-/detail/${id}`,
   };
