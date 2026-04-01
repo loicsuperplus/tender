@@ -3,11 +3,14 @@ export default async function handler(req, res) {
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
   const safeFields = ['publication-number', 'notice-title', 'buyer-name'];
+  const pcFilter = '(PC=79340000 OR PC=79400000 OR PC=79410000 OR PC=79416000)';
 
   const bodyVariants = [
-    // 1: Award notices for communication/consulting CPV codes
+    // 1: Belgian award notices for communication/consulting CPV
     {
-      query: 'notice-type=can-standard AND (cpv=79340000 OR cpv=79400000 OR cpv=79410000 OR cpv=79416000)',
+      query: q
+        ? `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL) AND "${q}"`
+        : `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL)`,
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
@@ -15,9 +18,9 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: Award notices — PC field
+    // 2: All EU award notices for communication CPV
     {
-      query: 'notice-type=can-standard AND PC IN (79340000,79400000,79410000)',
+      query: q ? `notice-type=can-standard AND ${pcFilter} AND "${q}"` : `notice-type=can-standard AND ${pcFilter}`,
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
@@ -25,11 +28,11 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Award notices in Belgium
+    // 3: Belgian award notices with keywords — recent
     {
       query: q
         ? `notice-type=can-standard AND organisation-country-buyer IN (BEL) AND "${q}"`
-        : 'notice-type=can-standard AND organisation-country-buyer IN (BEL) AND PD>20250101',
+        : 'notice-type=can-standard AND organisation-country-buyer IN (BEL) AND PD>20240601 AND (communication OR marketing OR consulting OR conseil)',
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
@@ -37,17 +40,17 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 4: Recent award notices with communication keywords
+    // 4: Belgian award notices — recent
     {
-      query: 'notice-type=can-standard AND PD>20250101 AND (communication OR marketing OR consulting)',
+      query: 'notice-type=can-standard AND organisation-country-buyer IN (BEL) AND PD>20250101',
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
       checkQuerySyntax: false,
     },
-    // 5: Broadest — recent award notices
+    // 5: Broadest — Belgian award notices
     {
-      query: 'notice-type=can-standard AND PD>20250301',
+      query: 'notice-type=can-standard AND organisation-country-buyer IN (BEL)',
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
@@ -73,7 +76,7 @@ export default async function handler(req, res) {
         variant: i + 1,
         status: response.status,
         query: bodyVariants[i].query,
-        responsePreview: responseBody.substring(0, 200),
+        responsePreview: responseBody.substring(0, 250),
       });
 
       if (response.ok) {

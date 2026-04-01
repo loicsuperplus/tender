@@ -3,14 +3,15 @@ export default async function handler(req, res) {
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
   const safeFields = ['publication-number', 'notice-title', 'buyer-name'];
+  // Communication/marketing/consulting CPV codes using PC field with OR
+  const pcFilter = '(PC=79340000 OR PC=79341000 OR PC=79342000 OR PC=79400000 OR PC=79410000 OR PC=79411000 OR PC=79416000 OR PC=79950000)';
 
-  // Try different query syntaxes for CPV communication/consulting codes
   const bodyVariants = [
-    // 1: CPV codes with OR syntax (no parentheses)
+    // 1: Belgian communication/consulting CPV — most relevant
     {
       query: q
-        ? `(cpv=79340000 OR cpv=79341000 OR cpv=79342000 OR cpv=79400000 OR cpv=79410000 OR cpv=79411000 OR cpv=79416000 OR cpv=79950000) AND "${q}"`
-        : 'cpv=79340000 OR cpv=79341000 OR cpv=79342000 OR cpv=79400000 OR cpv=79410000 OR cpv=79411000 OR cpv=79416000 OR cpv=79950000',
+        ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND "${q}"`
+        : `${pcFilter} AND organisation-country-buyer IN (BEL)`,
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -18,11 +19,9 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: Use PC field (old-style CPV) with IN syntax
+    // 2: Communication/consulting CPV — all EU
     {
-      query: q
-        ? `PC IN (79340000,79400000,79410000,79416000) AND "${q}"`
-        : 'PC IN (79340000,79400000,79410000,79416000)',
+      query: q ? `${pcFilter} AND "${q}"` : pcFilter,
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -30,42 +29,34 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Use text search for communication/consulting in Belgium
+    // 3: Belgian services with communication keywords — recent
     {
       query: q
-        ? `NC=services AND organisation-country-buyer IN (BEL) AND "${q}"`
-        : 'NC=services AND organisation-country-buyer IN (BEL)',
+        ? `NC=services AND organisation-country-buyer IN (BEL) AND PD>20240601 AND "${q}"`
+        : 'NC=services AND organisation-country-buyer IN (BEL) AND PD>20240601 AND (communication OR marketing OR publicité OR conseil OR consulting OR stratégie OR digital OR événement)',
       fields: safeFields,
       limit: 20,
-      scope: 'ACTIVE',
+      scope: 'ALL',
       paginationMode: 'PAGE_NUMBER',
       page: 1,
       checkQuerySyntax: false,
     },
-    // 4: Belgian services with date filter
-    {
-      query: 'NC=services AND organisation-country-buyer IN (BEL) AND PD>20250101',
-      fields: safeFields,
-      limit: 20,
-      scope: 'ALL',
-      checkQuerySyntax: false,
-    },
-    // 5: Communication keyword search — recent
+    // 4: Belgian services — recent (broader)
     {
       query: q
-        ? `NC=services AND PD>20250101 AND "${q}"`
-        : 'NC=services AND PD>20250101 AND (communication OR marketing OR consulting OR conseil)',
+        ? `NC=services AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`
+        : 'NC=services AND organisation-country-buyer IN (BEL) AND PD>20250101',
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
       checkQuerySyntax: false,
     },
-    // 6: Broadest fallback — recent services
+    // 5: Belgian services — all time
     {
-      query: 'NC=services AND PD>20250301',
+      query: 'NC=services AND organisation-country-buyer IN (BEL)',
       fields: safeFields,
       limit: 20,
-      scope: 'ALL',
+      scope: 'ACTIVE',
       checkQuerySyntax: false,
     },
   ];
@@ -88,7 +79,7 @@ export default async function handler(req, res) {
         variant: i + 1,
         status: response.status,
         query: bodyVariants[i].query,
-        responsePreview: responseBody.substring(0, 200),
+        responsePreview: responseBody.substring(0, 250),
       });
 
       if (response.ok) {
@@ -134,16 +125,20 @@ function parseNotice(notice, index) {
   const authority = getLocalized(notice['buyer-name']);
 
   const allText = `${title} ${authority}`.toLowerCase();
-  const commKw = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'branding', 'consulting', 'conseil', 'stratégie', 'digital', 'audit', 'événement', 'relations publiques', 'rédaction'];
+  const commKw = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'branding', 'consulting', 'conseil', 'stratégie', 'digital', 'audit', 'événement', 'relations publiques', 'rédaction', 'agence créative'];
   const relevanceScore = Math.min(95, 50 + commKw.filter(k => allText.includes(k)).length * 7);
-  const sector = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'relations publiques'].some(k => allText.includes(k))
+  const sector = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'relations publiques', 'agence créative'].some(k => allText.includes(k))
     ? 'Communication & campagnes' : 'Consulting & stratégie';
+
+  // Determine source based on title prefix (TED includes country)
+  const isBelgian = allText.includes('belgique') || allText.includes('belgië');
+  const source = isBelgian ? 'e-Procurement' : 'TED';
 
   return {
     id,
     title: title || `Avis TED ${id}`,
     authority: authority || 'Non communiqué',
-    source: 'TED',
+    source,
     sector,
     budget: 0,
     deadline: '',
