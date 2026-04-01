@@ -2,26 +2,26 @@ export default async function handler(req, res) {
   const { q = '' } = req.query;
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
-
-  // Try different body formats to find the one that works
   const baseQuery = 'cpv=[79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79411000 OR 79416000 OR 79950000]';
   const fullQuery = q ? `${baseQuery} AND "${q}"` : baseQuery;
 
+  // Known: query ✓, fields ✓, page ✓, scope must be 0-2
+  // Unknown: page size field name — try variants
   const bodyVariants = [
-    // Format 1: query + fields as documented
-    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, page: 1 },
-    // Format 2: q instead of query (like tap-eu-ted)
-    { q: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, pageNum: 1, scope: 3, sortField: 'PD', reverseOrder: true },
-    // Format 3: minimal
-    { query: fullQuery, pageSize: 20 },
-    // Format 4: just q
-    { q: fullQuery, pageSize: 20 },
-    // Format 5: with scope
-    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, page: 1, scope: 3 },
-    // Format 6: simple text search
-    { query: 'communication consulting', pageSize: 20, page: 1 },
-    // Format 7: empty to see what happens
-    { query: '*', pageSize: 5 },
+    // 1: minimal — just query
+    { query: fullQuery },
+    // 2: query + fields
+    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'] },
+    // 3: with limit
+    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], limit: 20, page: 1 },
+    // 4: with size
+    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], size: 20, page: 1 },
+    // 5: with scope 2
+    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], scope: 2, page: 1 },
+    // 6: with scope 1
+    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], scope: 1, page: 1 },
+    // 7: with scope 0
+    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], scope: 0, page: 1 },
   ];
 
   const debugInfo = [];
@@ -32,7 +32,7 @@ export default async function handler(req, res) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(bodyVariants[i]),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(12000),
       });
 
       let responseBody = '';
@@ -41,8 +41,8 @@ export default async function handler(req, res) {
       debugInfo.push({
         variant: i + 1,
         status: response.status,
-        sentBody: bodyVariants[i],
-        response: responseBody.substring(0, 500),
+        sent: bodyVariants[i],
+        response: responseBody.substring(0, 800),
       });
 
       if (response.ok) {
@@ -53,11 +53,12 @@ export default async function handler(req, res) {
             const tenders = results.map((n, idx) => parseNotice(n, idx)).filter(Boolean);
             return res.status(200).json({ tenders, total: data.total || tenders.length, source: 'live', workingVariant: i + 1 });
           }
-          // OK but empty — note it
-          debugInfo[debugInfo.length - 1].note = 'OK but empty results';
+          debugInfo[debugInfo.length - 1].note = `OK — ${results.length} results, keys: ${Object.keys(data).join(',')}`;
         } catch {
           debugInfo[debugInfo.length - 1].note = 'OK but invalid JSON';
         }
+        // If we got a 200, stop trying even if empty
+        break;
       }
     } catch (e) {
       debugInfo.push({ variant: i + 1, error: e.message });
@@ -91,8 +92,8 @@ function parseNotice(notice, index) {
     } catch { /* ignore */ }
   }
 
-  title = title || notice.title || notice.TI || '';
-  authority = authority || notice.buyerName || notice.AA || '';
+  title = title || notice.title || '';
+  authority = authority || notice.buyerName || '';
   if (!title && !noticeId) return null;
 
   const source = (country === 'BE') ? 'e-Procurement' : 'TED';
