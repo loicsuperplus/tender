@@ -3,15 +3,16 @@ export default async function handler(req, res) {
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
   const safeFields = ['publication-number', 'notice-title', 'buyer-name'];
-  // Communication/marketing/consulting CPV codes
   const pcFilter = '(PC=79340000 OR PC=79341000 OR PC=79342000 OR PC=79400000 OR PC=79410000 OR PC=79411000 OR PC=79416000 OR PC=79950000)';
+  // Today's date for deadline filter
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
   const bodyVariants = [
-    // 1: Belgian communication/consulting CPV — 2025 only, still open
+    // 1: Belgian communication CPV — deadline still in the future
     {
       query: q
-        ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`
-        : `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20250101`,
+        ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND DT>${today} AND "${q}"`
+        : `${pcFilter} AND organisation-country-buyer IN (BEL) AND DT>${today}`,
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -19,9 +20,11 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: All EU communication/consulting CPV — 2025, still open
+    // 2: Belgian communication CPV — try deadline-receipt-tender-date-lot field
     {
-      query: q ? `${pcFilter} AND PD>20250101 AND "${q}"` : `${pcFilter} AND PD>20250101`,
+      query: q
+        ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND deadline-receipt-tender-date-lot>${today} AND "${q}"`
+        : `${pcFilter} AND organisation-country-buyer IN (BEL) AND deadline-receipt-tender-date-lot>${today}`,
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -29,11 +32,35 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Belgian services 2025 still open (broadest fallback)
+    // 3: Belgian communication CPV — very recent publication (last 30 days likely still open)
     {
       query: q
-        ? `NC=services AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`
-        : 'NC=services AND organisation-country-buyer IN (BEL) AND PD>20250101',
+        ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20250301 AND "${q}"`
+        : `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20250301`,
+      fields: safeFields,
+      limit: 20,
+      scope: 'ACTIVE',
+      paginationMode: 'PAGE_NUMBER',
+      page: 1,
+      checkQuerySyntax: false,
+    },
+    // 4: EU communication CPV — very recent
+    {
+      query: q
+        ? `${pcFilter} AND PD>20250301 AND "${q}"`
+        : `${pcFilter} AND PD>20250301`,
+      fields: safeFields,
+      limit: 20,
+      scope: 'ACTIVE',
+      paginationMode: 'PAGE_NUMBER',
+      page: 1,
+      checkQuerySyntax: false,
+    },
+    // 5: Belgian services — very recent
+    {
+      query: q
+        ? `NC=services AND organisation-country-buyer IN (BEL) AND PD>20250301 AND "${q}"`
+        : 'NC=services AND organisation-country-buyer IN (BEL) AND PD>20250301',
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -43,7 +70,6 @@ export default async function handler(req, res) {
 
   for (let i = 0; i < bodyVariants.length; i++) {
     try {
-      // Small delay between retries to avoid rate limiting
       if (i > 0) await new Promise(r => setTimeout(r, 1500));
 
       const response = await fetch(TED_URL, {
@@ -53,7 +79,6 @@ export default async function handler(req, res) {
         signal: AbortSignal.timeout(15000),
       });
 
-      // If rate limited, wait and retry same variant once
       if (response.status === 429) {
         await new Promise(r => setTimeout(r, 3000));
         const retry = await fetch(TED_URL, {

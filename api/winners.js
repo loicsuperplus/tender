@@ -6,7 +6,7 @@ export default async function handler(req, res) {
   const pcFilter = '(PC=79340000 OR PC=79400000 OR PC=79410000 OR PC=79416000)';
 
   const bodyVariants = [
-    // 1: Belgian award notices for communication/consulting CPV — 2025
+    // 1: Belgian award notices for communication/consulting CPV — recent (last 3 months)
     {
       query: q
         ? `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`
