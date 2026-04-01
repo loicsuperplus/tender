@@ -2,40 +2,42 @@ export default async function handler(req, res) {
   const { q = '' } = req.query;
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
-  const baseQuery = q
-    ? `notice-type=can-standard AND NC=services AND "${q}"`
-    : 'notice-type=can-standard AND NC=services';
+  const safeFields = ['publication-number', 'notice-title', 'buyer-name'];
 
   const bodyVariants = [
-    // 1: Award notices for communication/consulting CPV codes
+    // 1: Award notices for communication/consulting CPV codes — recent
     {
-      query: 'notice-type=can-standard AND cpv=(79340000 OR 79400000 OR 79410000 OR 79416000)',
-      fields: ['publication-number', 'notice-title', 'buyer-name', 'organisation-country-buyer'],
+      query: 'notice-type=can-standard AND cpv=(79340000 OR 79400000 OR 79410000 OR 79416000) AND PD>20250101',
+      fields: safeFields,
       limit: 20,
       scope: 'ALL',
       paginationMode: 'PAGE_NUMBER',
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: Award notices for services
+    // 2: Award notices for services — recent
     {
-      query: baseQuery,
-      fields: ['publication-number', 'notice-title', 'buyer-name', 'organisation-country-buyer'],
+      query: q
+        ? `notice-type=can-standard AND NC=services AND PD>20250101 AND "${q}"`
+        : 'notice-type=can-standard AND NC=services AND PD>20250101',
+      fields: safeFields,
       limit: 20,
       scope: 'ALL',
       paginationMode: 'PAGE_NUMBER',
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Simplest fallback
+    // 3: Any recent award notices
     {
-      query: 'notice-type=can-standard',
-      fields: ['publication-number', 'notice-title', 'buyer-name', 'organisation-country-buyer'],
+      query: 'notice-type=can-standard AND PD>20250301',
+      fields: safeFields,
       limit: 20,
       scope: 'ALL',
       checkQuerySyntax: false,
     },
   ];
+
+  const debugInfo = [];
 
   for (let i = 0; i < bodyVariants.length; i++) {
     try {
@@ -46,8 +48,18 @@ export default async function handler(req, res) {
         signal: AbortSignal.timeout(15000),
       });
 
+      let responseBody = '';
+      try { responseBody = await response.text(); } catch { responseBody = 'unreadable'; }
+
+      debugInfo.push({
+        variant: i + 1,
+        status: response.status,
+        query: bodyVariants[i].query,
+        responsePreview: responseBody.substring(0, 300),
+      });
+
       if (response.ok) {
-        const data = await response.json();
+        const data = JSON.parse(responseBody);
         const notices = data.notices || [];
         if (Array.isArray(notices) && notices.length > 0) {
           const winners = notices.map((n, idx) => parseAward(n, idx)).filter(Boolean);
@@ -55,15 +67,17 @@ export default async function handler(req, res) {
             winners,
             total: data.totalNoticeCount || winners.length,
             source: 'live',
+            workingVariant: i + 1,
+            debug: debugInfo,
           });
         }
       }
     } catch (e) {
-      // Try next variant
+      debugInfo.push({ variant: i + 1, error: e.message });
     }
   }
 
-  return res.status(200).json({ winners: [], total: 0, source: 'api_unavailable' });
+  return res.status(200).json({ winners: [], total: 0, source: 'api_unavailable', debug: debugInfo });
 }
 
 function getLocalized(field) {

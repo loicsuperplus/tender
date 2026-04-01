@@ -2,41 +2,52 @@ export default async function handler(req, res) {
   const { q = '' } = req.query;
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
-  // Use parentheses for CPV query syntax, sorted by recent publication
+  // CPV codes for communication, marketing, consulting services
   const cpvQuery = 'cpv=(79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79411000 OR 79416000 OR 79950000)';
   const fullQuery = q ? `${cpvQuery} AND "${q}"` : cpvQuery;
-  const fields = ['publication-number', 'notice-title', 'buyer-name', 'organisation-country-buyer', 'deadline-receipt-tender-date-lot'];
+  // Only use fields known to work from previous tests
+  const safeFields = ['publication-number', 'notice-title', 'buyer-name'];
 
   const bodyVariants = [
-    // 1: CPV filter with validated field names
+    // 1: CPV filter — recent active notices only
     {
       query: fullQuery,
-      fields,
+      fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
       paginationMode: 'PAGE_NUMBER',
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: Broader — services category with CPV
+    // 2: Services + date filter for recent notices
     {
-      query: q ? `NC=services AND "${q}"` : 'NC=services AND cpv=(79340000 OR 79400000)',
-      fields,
+      query: q ? `NC=services AND PD>20250101 AND "${q}"` : 'NC=services AND PD>20250101',
+      fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
       paginationMode: 'PAGE_NUMBER',
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Fallback — just services
+    // 3: Services + recent date filter (broader)
     {
-      query: 'NC=services',
-      fields,
+      query: 'NC=services AND PD>20250301',
+      fields: safeFields,
       limit: 20,
-      scope: 'ACTIVE',
+      scope: 'ALL',
+      checkQuerySyntax: false,
+    },
+    // 4: Broadest fallback with date
+    {
+      query: 'NC=services AND PD>20250101',
+      fields: safeFields,
+      limit: 20,
+      scope: 'ALL',
       checkQuerySyntax: false,
     },
   ];
+
+  const debugInfo = [];
 
   for (let i = 0; i < bodyVariants.length; i++) {
     try {
@@ -47,8 +58,18 @@ export default async function handler(req, res) {
         signal: AbortSignal.timeout(15000),
       });
 
+      let responseBody = '';
+      try { responseBody = await response.text(); } catch { responseBody = 'unreadable'; }
+
+      debugInfo.push({
+        variant: i + 1,
+        status: response.status,
+        query: bodyVariants[i].query,
+        responsePreview: responseBody.substring(0, 300),
+      });
+
       if (response.ok) {
-        const data = await response.json();
+        const data = JSON.parse(responseBody);
         const notices = data.notices || [];
         if (Array.isArray(notices) && notices.length > 0) {
           const tenders = notices.map((n, idx) => parseNotice(n, idx)).filter(Boolean);
@@ -56,21 +77,22 @@ export default async function handler(req, res) {
             tenders,
             total: data.totalNoticeCount || tenders.length,
             source: 'live',
+            workingVariant: i + 1,
+            debug: debugInfo,
           });
         }
       }
     } catch (e) {
-      // Try next variant
+      debugInfo.push({ variant: i + 1, error: e.message });
     }
   }
 
-  return res.status(200).json({ tenders: [], total: 0, source: 'api_unavailable' });
+  return res.status(200).json({ tenders: [], total: 0, source: 'api_unavailable', debug: debugInfo });
 }
 
 function getLocalized(field) {
   if (!field) return '';
   if (typeof field === 'string') return field;
-  // Multilingual object: prefer fra > eng > first available
   if (field.fra) return Array.isArray(field.fra) ? field.fra[0] : field.fra;
   if (field.eng) return Array.isArray(field.eng) ? field.eng[0] : field.eng;
   if (field.nld) return Array.isArray(field.nld) ? field.nld[0] : field.nld;
@@ -87,36 +109,26 @@ function parseNotice(notice, index) {
   const id = notice['publication-number'] || `ted-${index}`;
   const title = getLocalized(notice['notice-title']);
   const authority = getLocalized(notice['buyer-name']);
-  const country = getLocalized(notice['organisation-country-buyer']);
-  const deadline = notice['deadline-receipt-tender-date-lot'] || '';
 
-  const source = (country === 'BEL' || country === 'BE') ? 'e-Procurement' : 'TED';
   const allText = `${title} ${authority}`.toLowerCase();
-  const commKw = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'branding', 'consulting', 'conseil', 'stratégie', 'digital', 'audit'];
+  const commKw = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'branding', 'consulting', 'conseil', 'stratégie', 'digital', 'audit', 'événement', 'relations publiques', 'rédaction'];
   const relevanceScore = Math.min(95, 50 + commKw.filter(k => allText.includes(k)).length * 7);
-  const sector = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité'].some(k => allText.includes(k))
+  const sector = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'relations publiques'].some(k => allText.includes(k))
     ? 'Communication & campagnes' : 'Consulting & stratégie';
-
-  let status = 'open';
-  if (deadline) {
-    const dl = Math.ceil((new Date(deadline) - new Date()) / 86400000);
-    if (dl <= 7 && dl > 0) status = 'closing_soon';
-    if (dl <= 0) status = 'closed';
-  }
 
   return {
     id,
     title: title || `Avis TED ${id}`,
     authority: authority || 'Non communiqué',
-    source,
+    source: 'TED',
     sector,
     budget: 0,
-    deadline: deadline || '',
+    deadline: '',
     published: '',
     description: title || 'Description non disponible',
     keywords: [],
     relevanceScore,
-    status,
+    status: 'open',
     referenceNumber: id,
     url: `https://ted.europa.eu/en/notice/-/detail/${id}`,
   };
