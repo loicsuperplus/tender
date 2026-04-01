@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
-import { Radar, FileText, Trophy } from 'lucide-react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import { Radar, FileText, Trophy, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import StatsHeader from './components/StatsHeader';
 import FilterBar from './components/FilterBar';
 import TenderCard from './components/TenderCard';
 import WinnerCard from './components/WinnerCard';
-import { tenders, winners } from './data/tenders';
+import { tenders as mockTenders, winners as mockWinners } from './data/tenders';
+import { fetchTenders, fetchWinners } from './services/api';
 
 const defaultFilters = {
   search: '',
@@ -24,7 +25,7 @@ function applyTenderFilters(items, filters) {
         t.title.toLowerCase().includes(q) ||
         t.description.toLowerCase().includes(q) ||
         t.authority.toLowerCase().includes(q) ||
-        t.keywords.some((k) => k.toLowerCase().includes(q))
+        (t.keywords || []).some((k) => k.toLowerCase().includes(q))
     );
   }
 
@@ -59,12 +60,8 @@ function applyWinnerFilters(items, filters) {
         w.name.toLowerCase().includes(q) ||
         w.tender.toLowerCase().includes(q) ||
         w.authority.toLowerCase().includes(q) ||
-        w.speciality.toLowerCase().includes(q)
+        (w.speciality || '').toLowerCase().includes(q)
     );
-  }
-
-  if (filters.source !== 'Toutes') {
-    // Winners don't have source in mock data, skip
   }
 
   if (filters.sort === 'collaboration') result.sort((a, b) => b.collaborationScore - a.collaborationScore);
@@ -79,8 +76,39 @@ export default function App() {
   const [tenderFilters, setTenderFilters] = useState({ ...defaultFilters });
   const [winnerFilters, setWinnerFilters] = useState({ ...defaultFilters, sort: 'collaboration' });
 
-  const filteredTenders = useMemo(() => applyTenderFilters(tenders, tenderFilters), [tenderFilters]);
-  const filteredWinners = useMemo(() => applyWinnerFilters(winners, winnerFilters), [winnerFilters]);
+  const [tenders, setTenders] = useState(mockTenders);
+  const [winners, setWinners] = useState(mockWinners);
+  const [dataSource, setDataSource] = useState('mock');
+  const [loading, setLoading] = useState(false);
+
+  const loadLiveData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [tenderResult, winnerResult] = await Promise.all([
+        fetchTenders(),
+        fetchWinners(),
+      ]);
+
+      if (tenderResult.source === 'live') {
+        setTenders(tenderResult.tenders);
+      }
+      if (winnerResult.source === 'live') {
+        setWinners(winnerResult.winners);
+      }
+
+      setDataSource(tenderResult.source === 'live' || winnerResult.source === 'live' ? 'live' : 'mock');
+    } catch {
+      setDataSource('mock');
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadLiveData();
+  }, [loadLiveData]);
+
+  const filteredTenders = useMemo(() => applyTenderFilters(tenders, tenderFilters), [tenders, tenderFilters]);
+  const filteredWinners = useMemo(() => applyWinnerFilters(winners, winnerFilters), [winners, winnerFilters]);
 
   const totalVolume = tenders.reduce((sum, t) => sum + t.budget, 0) + winners.reduce((sum, w) => sum + w.amount, 0);
 
@@ -94,30 +122,50 @@ export default function App() {
               <Radar size={22} />
             </div>
             <span className="text-xl font-bold text-gray-900 tracking-tight">TenderRadar</span>
+            {/* Data source indicator */}
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full ${
+              dataSource === 'live'
+                ? 'bg-emerald-50 text-emerald-700'
+                : 'bg-amber-50 text-amber-700'
+            }`}>
+              {dataSource === 'live' ? <Wifi size={10} /> : <WifiOff size={10} />}
+              {dataSource === 'live' ? 'Live TED' : 'Mock'}
+            </span>
           </div>
-          <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+
+          <div className="flex items-center gap-3">
             <button
-              onClick={() => setActiveTab('tenders')}
-              className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                activeTab === 'tenders'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
+              onClick={loadLiveData}
+              disabled={loading}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors ${loading ? 'opacity-50' : ''}`}
             >
-              <FileText size={16} />
-              Appels d'offres
+              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+              {loading ? 'Chargement...' : 'Actualiser'}
             </button>
-            <button
-              onClick={() => setActiveTab('winners')}
-              className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                activeTab === 'winners'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Trophy size={16} />
-              Adjudicataires
-            </button>
+            <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+              <button
+                onClick={() => setActiveTab('tenders')}
+                className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                  activeTab === 'tenders'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <FileText size={16} />
+                Appels d'offres
+              </button>
+              <button
+                onClick={() => setActiveTab('winners')}
+                className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                  activeTab === 'winners'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Trophy size={16} />
+                Adjudicataires
+              </button>
+            </div>
           </div>
         </div>
       </nav>
@@ -133,33 +181,51 @@ export default function App() {
         {activeTab === 'tenders' ? (
           <>
             <FilterBar filters={tenderFilters} setFilters={setTenderFilters} mode="tenders" />
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {filteredTenders.map((tender, i) => (
-                <TenderCard key={tender.id} tender={tender} index={i} />
-              ))}
-            </div>
-            {filteredTenders.length === 0 && (
+            {loading ? (
               <div className="text-center py-16 text-gray-400">
-                <FileText size={48} className="mx-auto mb-4 opacity-50" />
-                <p className="text-lg font-medium">Aucun appel d'offres trouvé</p>
-                <p className="text-sm mt-1">Essayez de modifier vos filtres</p>
+                <RefreshCw size={36} className="mx-auto mb-4 animate-spin opacity-50" />
+                <p className="text-lg font-medium">Chargement des appels d'offres TED...</p>
               </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {filteredTenders.map((tender, i) => (
+                    <TenderCard key={tender.id} tender={tender} index={i} />
+                  ))}
+                </div>
+                {filteredTenders.length === 0 && (
+                  <div className="text-center py-16 text-gray-400">
+                    <FileText size={48} className="mx-auto mb-4 opacity-50" />
+                    <p className="text-lg font-medium">Aucun appel d'offres trouvé</p>
+                    <p className="text-sm mt-1">Essayez de modifier vos filtres</p>
+                  </div>
+                )}
+              </>
             )}
           </>
         ) : (
           <>
             <FilterBar filters={winnerFilters} setFilters={setWinnerFilters} mode="winners" />
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {filteredWinners.map((winner, i) => (
-                <WinnerCard key={winner.id} winner={winner} index={i} />
-              ))}
-            </div>
-            {filteredWinners.length === 0 && (
+            {loading ? (
               <div className="text-center py-16 text-gray-400">
-                <Trophy size={48} className="mx-auto mb-4 opacity-50" />
-                <p className="text-lg font-medium">Aucun adjudicataire trouvé</p>
-                <p className="text-sm mt-1">Essayez de modifier vos filtres</p>
+                <RefreshCw size={36} className="mx-auto mb-4 animate-spin opacity-50" />
+                <p className="text-lg font-medium">Chargement des attributions TED...</p>
               </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {filteredWinners.map((winner, i) => (
+                    <WinnerCard key={winner.id} winner={winner} index={i} />
+                  ))}
+                </div>
+                {filteredWinners.length === 0 && (
+                  <div className="text-center py-16 text-gray-400">
+                    <Trophy size={48} className="mx-auto mb-4 opacity-50" />
+                    <p className="text-lg font-medium">Aucun adjudicataire trouvé</p>
+                    <p className="text-sm mt-1">Essayez de modifier vos filtres</p>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -168,7 +234,9 @@ export default function App() {
       {/* Footer */}
       <footer className="border-t border-gray-100 py-6 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-400">
-          TenderRadar — Veille marchés publics belges & européens · Données mock — prêt à connecter TED API & e-Procurement API
+          TenderRadar — Veille marchés publics belges & européens ·
+          {dataSource === 'live' ? ' Données en direct via TED API' : ' Données de démonstration (fallback mock)'}
+          {' · '}Source : publications.europa.eu
         </div>
       </footer>
     </div>
