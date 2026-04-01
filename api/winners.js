@@ -1,24 +1,15 @@
 export default async function handler(req, res) {
   const { q = '' } = req.query;
 
-  // TD=[7] = Contract award notices; NC=services for service contracts
-  const baseQuery = 'cpv=[79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79416000] AND notice-type=can-standard';
-  const fullQuery = q ? `${baseQuery} AND "${q}"` : baseQuery;
+  const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
+  const baseQuery = q
+    ? `notice-type=can-standard AND NC=services AND "${q}"`
+    : 'notice-type=can-standard AND NC=services';
 
   const bodyVariants = [
-    // 1: Full fields — contract award notices
+    // 1: Award notices for communication/consulting CPV codes
     {
-      query: fullQuery,
-      fields: ['publication-number', 'notice-title', 'buyer-name', 'notice-type', 'publication-date', 'notice-value', 'buyer-country', 'winner-name'],
-      limit: 20,
-      scope: 'ALL',
-      paginationMode: 'PAGE_NUMBER',
-      page: 1,
-      checkQuerySyntax: false,
-    },
-    // 2: Minimal fields
-    {
-      query: fullQuery,
+      query: 'notice-type=can-standard AND cpv=(79340000 OR 79400000 OR 79410000 OR 79416000)',
       fields: ['publication-number', 'notice-title', 'buyer-name'],
       limit: 20,
       scope: 'ALL',
@@ -26,88 +17,82 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Broader query — any award notice in services
+    // 2: Award notices for services
     {
-      query: 'notice-type=can-standard AND NC=services',
+      query: baseQuery,
       fields: ['publication-number', 'notice-title', 'buyer-name'],
       limit: 20,
       scope: 'ALL',
+      paginationMode: 'PAGE_NUMBER',
+      page: 1,
       checkQuerySyntax: false,
     },
-    // 4: Simplest possible — just award notices
+    // 3: Simplest fallback
     {
       query: 'notice-type=can-standard',
-      fields: ['publication-number'],
-      limit: 10,
+      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      limit: 20,
       scope: 'ALL',
       checkQuerySyntax: false,
     },
   ];
 
-  const debugInfo = [];
-
   for (let i = 0; i < bodyVariants.length; i++) {
     try {
-      const response = await fetch('https://api.ted.europa.eu/v3/notices/search', {
+      const response = await fetch(TED_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(bodyVariants[i]),
         signal: AbortSignal.timeout(15000),
       });
 
-      let responseBody = '';
-      try { responseBody = await response.text(); } catch { responseBody = 'unreadable'; }
-
-      debugInfo.push({
-        variant: i + 1,
-        status: response.status,
-        sent: bodyVariants[i],
-        response: responseBody.substring(0, 1500),
-      });
-
       if (response.ok) {
-        try {
-          const data = JSON.parse(responseBody);
-          const results = data.results || data.notices || [];
-          debugInfo[debugInfo.length - 1].note = `OK — ${results.length} results, keys: ${Object.keys(data).join(',')}`;
-
-          if (Array.isArray(results) && results.length > 0) {
-            debugInfo[debugInfo.length - 1].firstResultKeys = Object.keys(results[0]);
-            debugInfo[debugInfo.length - 1].firstResult = JSON.stringify(results[0]).substring(0, 500);
-
-            const winners = results.map((n, i) => parseAward(n, i)).filter(Boolean);
-            return res.status(200).json({ winners, total: data.total || winners.length, source: 'live', workingVariant: i + 1, debug: debugInfo });
-          }
-        } catch (e) {
-          debugInfo[debugInfo.length - 1].note = 'OK but JSON parse error: ' + e.message;
+        const data = await response.json();
+        const notices = data.notices || [];
+        if (Array.isArray(notices) && notices.length > 0) {
+          const winners = notices.map((n, idx) => parseAward(n, idx)).filter(Boolean);
+          return res.status(200).json({
+            winners,
+            total: data.totalNoticeCount || winners.length,
+            source: 'live',
+          });
         }
       }
     } catch (e) {
-      debugInfo.push({ variant: i + 1, error: e.message });
+      // Try next variant
     }
   }
 
-  return res.status(200).json({ winners: [], total: 0, source: 'api_unavailable', debug: debugInfo });
+  return res.status(200).json({ winners: [], total: 0, source: 'api_unavailable' });
+}
+
+function getLocalized(field) {
+  if (!field) return '';
+  if (typeof field === 'string') return field;
+  if (field.fra) return Array.isArray(field.fra) ? field.fra[0] : field.fra;
+  if (field.eng) return Array.isArray(field.eng) ? field.eng[0] : field.eng;
+  if (field.nld) return Array.isArray(field.nld) ? field.nld[0] : field.nld;
+  if (field.deu) return Array.isArray(field.deu) ? field.deu[0] : field.deu;
+  const keys = Object.keys(field);
+  if (keys.length > 0) {
+    const val = field[keys[0]];
+    return Array.isArray(val) ? val[0] : val;
+  }
+  return '';
 }
 
 function parseAward(notice, index) {
-  const id = notice['publication-number'] || notice['notice-id'] || notice.id || '';
-  const title = notice['notice-title'] || notice.title || '';
-  const authority = notice['buyer-name'] || notice.buyerName || '';
-  const name = notice['winner-name'] || '';
-  const amount = parseFloat(notice['notice-value'] || 0) || 0;
-  const pubDate = notice['publication-date'] || '';
-  const country = notice['buyer-country'] || '';
-
-  if (!title && !id) return null;
+  const id = notice['publication-number'] || `win-${index}`;
+  const title = getLocalized(notice['notice-title']);
+  const authority = getLocalized(notice['buyer-name']);
 
   return {
-    id: id || `win-${index}`,
-    name: name || 'Non communiqué',
-    amount,
+    id,
+    name: authority || 'Non communiqué',
+    amount: 0,
     tender: title || `Attribution TED ${id}`,
-    authority,
-    date: pubDate,
+    authority: authority || 'Non communiqué',
+    date: '',
     website: '',
     linkedin: '',
     email: '',

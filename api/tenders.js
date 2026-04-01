@@ -2,21 +2,12 @@ export default async function handler(req, res) {
   const { q = '' } = req.query;
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
-  const baseQuery = 'cpv=[79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79411000 OR 79416000 OR 79950000]';
-  const fullQuery = q ? `${baseQuery} AND "${q}"` : baseQuery;
+  // Use parentheses instead of brackets for CPV query syntax
+  const cpvQuery = 'cpv=(79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79411000 OR 79416000 OR 79950000)';
+  const fullQuery = q ? `${cpvQuery} AND "${q}"` : cpvQuery;
 
   const bodyVariants = [
-    // 1: Official format from TED reusers workshop
-    {
-      query: fullQuery,
-      fields: ['publication-number', 'notice-title', 'buyer-name', 'notice-type', 'publication-date', 'deadline-receipt-tenders', 'place-of-performance', 'notice-value', 'buyer-country'],
-      limit: 20,
-      scope: 'ACTIVE',
-      paginationMode: 'PAGE_NUMBER',
-      page: 1,
-      checkQuerySyntax: false,
-    },
-    // 2: Minimal fields
+    // 1: CPV filter with validated field names
     {
       query: fullQuery,
       fields: ['publication-number', 'notice-title', 'buyer-name'],
@@ -26,25 +17,25 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Just publication-number (known valid from docs)
+    // 2: Broader — services category
     {
-      query: fullQuery,
-      fields: ['publication-number'],
+      query: q ? `NC=services AND "${q}"` : 'NC=services AND cpv=(79340000 OR 79400000)',
+      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      limit: 20,
+      scope: 'ACTIVE',
+      paginationMode: 'PAGE_NUMBER',
+      page: 1,
+      checkQuerySyntax: false,
+    },
+    // 3: Fallback — just services
+    {
+      query: 'NC=services',
+      fields: ['publication-number', 'notice-title', 'buyer-name'],
       limit: 20,
       scope: 'ACTIVE',
       checkQuerySyntax: false,
     },
-    // 4: Broader query with just publication-number
-    {
-      query: 'NC=services',
-      fields: ['publication-number'],
-      limit: 10,
-      scope: 'ACTIVE',
-      checkQuerySyntax: false,
-    },
   ];
-
-  const debugInfo = [];
 
   for (let i = 0; i < bodyVariants.length; i++) {
     try {
@@ -55,73 +46,68 @@ export default async function handler(req, res) {
         signal: AbortSignal.timeout(15000),
       });
 
-      let responseBody = '';
-      try { responseBody = await response.text(); } catch { responseBody = 'unreadable'; }
-
-      debugInfo.push({
-        variant: i + 1,
-        status: response.status,
-        sent: bodyVariants[i],
-        response: responseBody.substring(0, 1500),
-      });
-
       if (response.ok) {
-        try {
-          const data = JSON.parse(responseBody);
-          const results = data.results || data.notices || [];
-          debugInfo[debugInfo.length - 1].note = `OK — ${results.length} results, keys: ${Object.keys(data).join(',')}`;
-
-          if (Array.isArray(results) && results.length > 0) {
-            debugInfo[debugInfo.length - 1].firstResultKeys = Object.keys(results[0]);
-            debugInfo[debugInfo.length - 1].firstResult = JSON.stringify(results[0]).substring(0, 500);
-
-            const tenders = results.map((n, idx) => parseNotice(n, idx)).filter(Boolean);
-            return res.status(200).json({ tenders, total: data.total || tenders.length, source: 'live', workingVariant: i + 1, debug: debugInfo });
-          }
-        } catch (e) {
-          debugInfo[debugInfo.length - 1].note = 'OK but JSON parse error: ' + e.message;
+        const data = await response.json();
+        const notices = data.notices || [];
+        if (Array.isArray(notices) && notices.length > 0) {
+          const tenders = notices.map((n, idx) => parseNotice(n, idx)).filter(Boolean);
+          return res.status(200).json({
+            tenders,
+            total: data.totalNoticeCount || tenders.length,
+            source: 'live',
+          });
         }
       }
     } catch (e) {
-      debugInfo.push({ variant: i + 1, error: e.message });
+      // Try next variant
     }
   }
 
-  return res.status(200).json({ tenders: [], total: 0, source: 'api_unavailable', debug: debugInfo });
+  return res.status(200).json({ tenders: [], total: 0, source: 'api_unavailable' });
+}
+
+function getLocalized(field) {
+  if (!field) return '';
+  if (typeof field === 'string') return field;
+  // Multilingual object: prefer fra > eng > first available
+  if (field.fra) return Array.isArray(field.fra) ? field.fra[0] : field.fra;
+  if (field.eng) return Array.isArray(field.eng) ? field.eng[0] : field.eng;
+  if (field.nld) return Array.isArray(field.nld) ? field.nld[0] : field.nld;
+  if (field.deu) return Array.isArray(field.deu) ? field.deu[0] : field.deu;
+  const keys = Object.keys(field);
+  if (keys.length > 0) {
+    const val = field[keys[0]];
+    return Array.isArray(val) ? val[0] : val;
+  }
+  return '';
 }
 
 function parseNotice(notice, index) {
-  // Try all known field patterns (eForms + legacy)
-  const id = notice['publication-number'] || notice['notice-id'] || notice.noticeId || notice.id || `ted-${index}`;
-  const title = notice['notice-title'] || notice['BT-21-Procedure'] || notice.title || '';
-  const authority = notice['buyer-name'] || notice['tendering-party-name'] || notice.buyerName || '';
-  const description = notice['notice-description'] || notice.description || '';
-  const deadline = notice['deadline-receipt-tenders'] || notice['BT-131-Lot'] || notice.submissionDeadline || '';
-  const budget = parseFloat(notice['notice-value'] || notice['BT-27-Procedure'] || notice.estimatedValue || 0) || 0;
-  const country = notice['buyer-country'] || notice['organisation-country-buyer'] || notice.buyerCountry || '';
-  const pubDate = notice['publication-date'] || notice.publicationDate || '';
-  const noticeType = notice['notice-type'] || '';
+  const id = notice['publication-number'] || `ted-${index}`;
+  const title = getLocalized(notice['notice-title']);
+  const authority = getLocalized(notice['buyer-name']);
 
-  if (!title && !id) return null;
-
-  const source = (country === 'BE' || country === 'BEL') ? 'e-Procurement' : 'TED';
-  const allText = `${title} ${description} ${authority}`.toLowerCase();
-  const kw = ['communication', 'campagne', 'consulting', 'stratégie', 'digital', 'marketing', 'audit', 'conseil'];
-  const relevanceScore = Math.min(95, 50 + kw.filter(k => allText.includes(k)).length * 7);
-  const commKw = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'advertising', 'branding'];
-  const sector = commKw.some(k => allText.includes(k)) ? 'Communication & campagnes' : 'Consulting & stratégie';
-
-  let status = 'open';
-  if (deadline) {
-    const dl = Math.ceil((new Date(deadline) - new Date()) / 86400000);
-    if (dl <= 7 && dl > 0) status = 'closing_soon';
-    if (dl <= 0) status = 'closed';
-  }
+  const source = 'TED';
+  const allText = `${title} ${authority}`.toLowerCase();
+  const commKw = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité', 'branding', 'consulting', 'conseil', 'stratégie', 'digital', 'audit'];
+  const relevanceScore = Math.min(95, 50 + commKw.filter(k => allText.includes(k)).length * 7);
+  const sector = ['communication', 'campagne', 'campaign', 'marketing', 'média', 'media', 'publicité'].some(k => allText.includes(k))
+    ? 'Communication & campagnes' : 'Consulting & stratégie';
 
   return {
-    id, title: title || `Avis TED ${id}`, authority, source, sector, budget, deadline,
-    published: pubDate, description: description || title || 'Description non disponible',
-    keywords: [], relevanceScore, status, referenceNumber: id,
+    id,
+    title: title || `Avis TED ${id}`,
+    authority: authority || 'Non communiqué',
+    source,
+    sector,
+    budget: 0,
+    deadline: '',
+    published: '',
+    description: title || 'Description non disponible',
+    keywords: [],
+    relevanceScore,
+    status: 'open',
+    referenceNumber: id,
     url: `https://ted.europa.eu/en/notice/-/detail/${id}`,
   };
 }
