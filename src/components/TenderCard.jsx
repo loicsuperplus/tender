@@ -1,6 +1,8 @@
 import { Calendar, Euro, Building2, Clock, Tag, ExternalLink } from 'lucide-react';
 
 const sourceBadge = {
+  Belgique: 'bg-teal-50 text-teal-700 border-teal-200',
+  Europe: 'bg-blue-50 text-blue-700 border-blue-200',
   TED: 'bg-red-50 text-red-700 border-red-200',
   'e-Procurement': 'bg-teal-50 text-teal-700 border-teal-200',
   Bulletin: 'bg-orange-50 text-orange-700 border-orange-200',

@@ -141,7 +141,7 @@ function parseNotice(notice, index) {
     ? 'Communication & campagnes' : 'Consulting & stratégie';
 
   const isBelgian = allText.includes('belgique') || allText.includes('belgië');
-  const source = isBelgian ? 'e-Procurement' : 'TED';
+  const source = isBelgian ? 'Belgique' : 'Europe';
 
   return {
     id,

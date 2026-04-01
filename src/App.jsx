@@ -62,7 +62,7 @@ function applyWinnerFilters(items, filters) {
     result = result.filter(
       (w) =>
         w.name.toLowerCase().includes(q) ||
-        w.tender.toLowerCase().includes(q) ||
+        (typeof w.tender === 'string' ? w.tender.toLowerCase().includes(q) : false) ||
         w.authority.toLowerCase().includes(q) ||
         (w.speciality || '').toLowerCase().includes(q)
     );
