@@ -1,71 +1,69 @@
 export default async function handler(req, res) {
   const { q = '' } = req.query;
 
-  // Expert query: CPV codes for communication & consulting
+  const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
+
+  // Try different body formats to find the one that works
   const baseQuery = 'cpv=[79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79411000 OR 79416000 OR 79950000]';
   const fullQuery = q ? `${baseQuery} AND "${q}"` : baseQuery;
 
-  // Try multiple TED API URLs (v3.0 may have migrated to v3)
-  const urls = [
-    `https://ted.europa.eu/api/v3.0/notices/search?query=${encodeURIComponent(fullQuery)}&fields=ND,PD,CONTENT&pageSize=20&pageNum=1&sortField=PD&reverseOrder=true`,
-    `https://api.ted.europa.eu/v3/notices/search?query=${encodeURIComponent(fullQuery)}&fields=ND,PD,CONTENT&pageSize=20&page=1&sortField=PUBLICATION_DATE&sortOrder=DESC`,
-    `https://ted.europa.eu/api/v3.0/notices/search?q=${encodeURIComponent(fullQuery)}&fields=ND,PD,CONTENT&pageSize=20&pageNum=1&sortField=PD&reverseOrder=true`,
-  ];
-
-  // Also try POST variants
-  const postBodies = [
-    { url: 'https://ted.europa.eu/api/v3.0/notices/search', body: { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, pageNum: 1, sortField: 'PD', reverseOrder: true } },
-    { url: 'https://api.ted.europa.eu/v3/notices/search', body: { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, page: 1 } },
-    { url: 'https://ted.europa.eu/api/v3.0/notices/search', body: { q: fullQuery, fields: ['ND', 'PD', 'CONTENT'], scope: 3, pageSize: 20, pageNum: 1, sortField: 'PD', reverseOrder: false } },
+  const bodyVariants = [
+    // Format 1: query + fields as documented
+    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, page: 1 },
+    // Format 2: q instead of query (like tap-eu-ted)
+    { q: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, pageNum: 1, scope: 3, sortField: 'PD', reverseOrder: true },
+    // Format 3: minimal
+    { query: fullQuery, pageSize: 20 },
+    // Format 4: just q
+    { q: fullQuery, pageSize: 20 },
+    // Format 5: with scope
+    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, page: 1, scope: 3 },
+    // Format 6: simple text search
+    { query: 'communication consulting', pageSize: 20, page: 1 },
+    // Format 7: empty to see what happens
+    { query: '*', pageSize: 5 },
   ];
 
   const debugInfo = [];
 
-  // Try GET requests
-  for (const url of urls) {
+  for (let i = 0; i < bodyVariants.length; i++) {
     try {
-      const response = await fetch(url, {
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(8000),
-      });
-      debugInfo.push({ method: 'GET', url: url.substring(0, 80), status: response.status });
-      if (response.ok) {
-        const data = await response.json();
-        const results = data.results || data.notices || [];
-        if (Array.isArray(results) && results.length > 0) {
-          const tenders = results.map((n, i) => parseNotice(n, i)).filter(Boolean);
-          return res.status(200).json({ tenders, total: data.total || tenders.length, source: 'live' });
-        }
-      }
-    } catch (e) {
-      debugInfo.push({ method: 'GET', url: url.substring(0, 80), error: e.message });
-    }
-  }
-
-  // Try POST requests
-  for (const { url, body } of postBodies) {
-    try {
-      const response = await fetch(url, {
+      const response = await fetch(TED_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(8000),
+        body: JSON.stringify(bodyVariants[i]),
+        signal: AbortSignal.timeout(10000),
       });
-      debugInfo.push({ method: 'POST', url: url.substring(0, 80), status: response.status });
+
+      let responseBody = '';
+      try { responseBody = await response.text(); } catch { responseBody = 'unreadable'; }
+
+      debugInfo.push({
+        variant: i + 1,
+        status: response.status,
+        sentBody: bodyVariants[i],
+        response: responseBody.substring(0, 500),
+      });
+
       if (response.ok) {
-        const data = await response.json();
-        const results = data.results || data.notices || [];
-        if (Array.isArray(results) && results.length > 0) {
-          const tenders = results.map((n, i) => parseNotice(n, i)).filter(Boolean);
-          return res.status(200).json({ tenders, total: data.total || tenders.length, source: 'live' });
+        try {
+          const data = JSON.parse(responseBody);
+          const results = data.results || data.notices || [];
+          if (Array.isArray(results) && results.length > 0) {
+            const tenders = results.map((n, idx) => parseNotice(n, idx)).filter(Boolean);
+            return res.status(200).json({ tenders, total: data.total || tenders.length, source: 'live', workingVariant: i + 1 });
+          }
+          // OK but empty — note it
+          debugInfo[debugInfo.length - 1].note = 'OK but empty results';
+        } catch {
+          debugInfo[debugInfo.length - 1].note = 'OK but invalid JSON';
         }
       }
     } catch (e) {
-      debugInfo.push({ method: 'POST', url: url.substring(0, 80), error: e.message });
+      debugInfo.push({ variant: i + 1, error: e.message });
     }
   }
 
-  // All attempts failed
   return res.status(200).json({ tenders: [], total: 0, source: 'api_unavailable', debug: debugInfo });
 }
 
@@ -73,12 +71,7 @@ function parseNotice(notice, index) {
   const noticeId = notice.ND || notice.noticeId || notice.id || '';
   const pubDate = notice.PD || notice.publicationDate || '';
 
-  let title = '';
-  let authority = '';
-  let description = '';
-  let deadline = '';
-  let budget = 0;
-  let country = '';
+  let title = '', authority = '', description = '', deadline = '', budget = 0, country = '';
 
   if (notice.content || notice.CONTENT) {
     try {
@@ -89,19 +82,17 @@ function parseNotice(notice, index) {
       authority = authMatch ? cleanXml(authMatch[1]) : '';
       const descMatch = xml.match(/<SHORT_DESCR[^>]*>\s*<P>(.*?)<\/P>/s);
       description = descMatch ? cleanXml(descMatch[1]) : '';
-      const deadlineMatch = xml.match(/<DATE_RECEIPT_TENDERS>(.*?)<\/DATE_RECEIPT_TENDERS>/);
-      deadline = deadlineMatch ? deadlineMatch[1] : '';
-      const valueMatch = xml.match(/<VAL_ESTIMATED_TOTAL[^>]*>(.*?)<\/VAL_ESTIMATED_TOTAL>/) || xml.match(/<VAL_TOTAL[^>]*>(.*?)<\/VAL_TOTAL>/);
-      budget = valueMatch ? parseFloat(valueMatch[1]) || 0 : 0;
-      const countryMatch = xml.match(/<COUNTRY VALUE="(.*?)"/);
-      country = countryMatch ? countryMatch[1] : '';
+      const dlMatch = xml.match(/<DATE_RECEIPT_TENDERS>(.*?)<\/DATE_RECEIPT_TENDERS>/);
+      deadline = dlMatch ? dlMatch[1] : '';
+      const valMatch = xml.match(/<VAL_ESTIMATED_TOTAL[^>]*>(.*?)<\/VAL_ESTIMATED_TOTAL>/) || xml.match(/<VAL_TOTAL[^>]*>(.*?)<\/VAL_TOTAL>/);
+      budget = valMatch ? parseFloat(valMatch[1]) || 0 : 0;
+      const cyMatch = xml.match(/<COUNTRY VALUE="(.*?)"/);
+      country = cyMatch ? cyMatch[1] : '';
     } catch { /* ignore */ }
   }
 
-  // Also try direct fields (non-XML responses)
   title = title || notice.title || notice.TI || '';
   authority = authority || notice.buyerName || notice.AA || '';
-
   if (!title && !noticeId) return null;
 
   const source = (country === 'BE') ? 'e-Procurement' : 'TED';
@@ -118,17 +109,14 @@ function parseNotice(notice, index) {
     if (dl <= 0) status = 'closed';
   }
 
-  let formattedPubDate = pubDate;
-  if (pubDate && pubDate.length === 8) formattedPubDate = `${pubDate.slice(0,4)}-${pubDate.slice(4,6)}-${pubDate.slice(6,8)}`;
+  let fmtDate = pubDate;
+  if (pubDate && pubDate.length === 8) fmtDate = `${pubDate.slice(0,4)}-${pubDate.slice(4,6)}-${pubDate.slice(6,8)}`;
 
   return {
-    id: noticeId || `ted-${index}`,
-    title: title || `Avis TED ${noticeId}`,
-    authority, source, sector, budget, deadline,
-    published: formattedPubDate,
+    id: noticeId || `ted-${index}`, title: title || `Avis TED ${noticeId}`,
+    authority, source, sector, budget, deadline, published: fmtDate,
     description: description || title || 'Description non disponible',
-    keywords: [], relevanceScore, status,
-    referenceNumber: noticeId,
+    keywords: [], relevanceScore, status, referenceNumber: noticeId,
     url: `https://ted.europa.eu/en/notice/-/detail/${noticeId}`,
   };
 }
