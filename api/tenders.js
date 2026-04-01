@@ -5,23 +5,43 @@ export default async function handler(req, res) {
   const baseQuery = 'cpv=[79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79411000 OR 79416000 OR 79950000]';
   const fullQuery = q ? `${baseQuery} AND "${q}"` : baseQuery;
 
-  // Known: query ✓, fields ✓, page ✓, scope must be 0-2
-  // Unknown: page size field name — try variants
   const bodyVariants = [
-    // 1: minimal — just query
-    { query: fullQuery },
-    // 2: query + fields
-    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'] },
-    // 3: with limit
-    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], limit: 20, page: 1 },
-    // 4: with size
-    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], size: 20, page: 1 },
-    // 5: with scope 2
-    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], scope: 2, page: 1 },
-    // 6: with scope 1
-    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], scope: 1, page: 1 },
-    // 7: with scope 0
-    { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], scope: 0, page: 1 },
+    // 1: Official format from TED reusers workshop
+    {
+      query: fullQuery,
+      fields: ['publication-number', 'notice-title', 'buyer-name', 'notice-type', 'publication-date', 'deadline-receipt-tenders', 'place-of-performance', 'notice-value', 'buyer-country'],
+      limit: 20,
+      scope: 'ACTIVE',
+      paginationMode: 'PAGE_NUMBER',
+      page: 1,
+      checkQuerySyntax: false,
+    },
+    // 2: Minimal fields
+    {
+      query: fullQuery,
+      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      limit: 20,
+      scope: 'ACTIVE',
+      paginationMode: 'PAGE_NUMBER',
+      page: 1,
+      checkQuerySyntax: false,
+    },
+    // 3: Just publication-number (known valid from docs)
+    {
+      query: fullQuery,
+      fields: ['publication-number'],
+      limit: 20,
+      scope: 'ACTIVE',
+      checkQuerySyntax: false,
+    },
+    // 4: Broader query with just publication-number
+    {
+      query: 'NC=services',
+      fields: ['publication-number'],
+      limit: 10,
+      scope: 'ACTIVE',
+      checkQuerySyntax: false,
+    },
   ];
 
   const debugInfo = [];
@@ -32,7 +52,7 @@ export default async function handler(req, res) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(bodyVariants[i]),
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(15000),
       });
 
       let responseBody = '';
@@ -42,23 +62,25 @@ export default async function handler(req, res) {
         variant: i + 1,
         status: response.status,
         sent: bodyVariants[i],
-        response: responseBody.substring(0, 800),
+        response: responseBody.substring(0, 1500),
       });
 
       if (response.ok) {
         try {
           const data = JSON.parse(responseBody);
           const results = data.results || data.notices || [];
-          if (Array.isArray(results) && results.length > 0) {
-            const tenders = results.map((n, idx) => parseNotice(n, idx)).filter(Boolean);
-            return res.status(200).json({ tenders, total: data.total || tenders.length, source: 'live', workingVariant: i + 1 });
-          }
           debugInfo[debugInfo.length - 1].note = `OK — ${results.length} results, keys: ${Object.keys(data).join(',')}`;
-        } catch {
-          debugInfo[debugInfo.length - 1].note = 'OK but invalid JSON';
+
+          if (Array.isArray(results) && results.length > 0) {
+            debugInfo[debugInfo.length - 1].firstResultKeys = Object.keys(results[0]);
+            debugInfo[debugInfo.length - 1].firstResult = JSON.stringify(results[0]).substring(0, 500);
+
+            const tenders = results.map((n, idx) => parseNotice(n, idx)).filter(Boolean);
+            return res.status(200).json({ tenders, total: data.total || tenders.length, source: 'live', workingVariant: i + 1, debug: debugInfo });
+          }
+        } catch (e) {
+          debugInfo[debugInfo.length - 1].note = 'OK but JSON parse error: ' + e.message;
         }
-        // If we got a 200, stop trying even if empty
-        break;
       }
     } catch (e) {
       debugInfo.push({ variant: i + 1, error: e.message });
@@ -69,34 +91,20 @@ export default async function handler(req, res) {
 }
 
 function parseNotice(notice, index) {
-  const noticeId = notice.ND || notice.noticeId || notice.id || '';
-  const pubDate = notice.PD || notice.publicationDate || '';
+  // Try all known field patterns (eForms + legacy)
+  const id = notice['publication-number'] || notice['notice-id'] || notice.noticeId || notice.id || `ted-${index}`;
+  const title = notice['notice-title'] || notice['BT-21-Procedure'] || notice.title || '';
+  const authority = notice['buyer-name'] || notice['tendering-party-name'] || notice.buyerName || '';
+  const description = notice['notice-description'] || notice.description || '';
+  const deadline = notice['deadline-receipt-tenders'] || notice['BT-131-Lot'] || notice.submissionDeadline || '';
+  const budget = parseFloat(notice['notice-value'] || notice['BT-27-Procedure'] || notice.estimatedValue || 0) || 0;
+  const country = notice['buyer-country'] || notice['organisation-country-buyer'] || notice.buyerCountry || '';
+  const pubDate = notice['publication-date'] || notice.publicationDate || '';
+  const noticeType = notice['notice-type'] || '';
 
-  let title = '', authority = '', description = '', deadline = '', budget = 0, country = '';
+  if (!title && !id) return null;
 
-  if (notice.content || notice.CONTENT) {
-    try {
-      const xml = Buffer.from(notice.content || notice.CONTENT, 'base64').toString('utf-8');
-      const titleMatch = xml.match(/<TITLE[^>]*>\s*<P>(.*?)<\/P>/s) || xml.match(/<SHORT_DESCR[^>]*>\s*<P>(.*?)<\/P>/s);
-      title = titleMatch ? cleanXml(titleMatch[1]) : '';
-      const authMatch = xml.match(/<OFFICIALNAME>(.*?)<\/OFFICIALNAME>/);
-      authority = authMatch ? cleanXml(authMatch[1]) : '';
-      const descMatch = xml.match(/<SHORT_DESCR[^>]*>\s*<P>(.*?)<\/P>/s);
-      description = descMatch ? cleanXml(descMatch[1]) : '';
-      const dlMatch = xml.match(/<DATE_RECEIPT_TENDERS>(.*?)<\/DATE_RECEIPT_TENDERS>/);
-      deadline = dlMatch ? dlMatch[1] : '';
-      const valMatch = xml.match(/<VAL_ESTIMATED_TOTAL[^>]*>(.*?)<\/VAL_ESTIMATED_TOTAL>/) || xml.match(/<VAL_TOTAL[^>]*>(.*?)<\/VAL_TOTAL>/);
-      budget = valMatch ? parseFloat(valMatch[1]) || 0 : 0;
-      const cyMatch = xml.match(/<COUNTRY VALUE="(.*?)"/);
-      country = cyMatch ? cyMatch[1] : '';
-    } catch { /* ignore */ }
-  }
-
-  title = title || notice.title || '';
-  authority = authority || notice.buyerName || '';
-  if (!title && !noticeId) return null;
-
-  const source = (country === 'BE') ? 'e-Procurement' : 'TED';
+  const source = (country === 'BE' || country === 'BEL') ? 'e-Procurement' : 'TED';
   const allText = `${title} ${description} ${authority}`.toLowerCase();
   const kw = ['communication', 'campagne', 'consulting', 'stratégie', 'digital', 'marketing', 'audit', 'conseil'];
   const relevanceScore = Math.min(95, 50 + kw.filter(k => allText.includes(k)).length * 7);
@@ -110,16 +118,10 @@ function parseNotice(notice, index) {
     if (dl <= 0) status = 'closed';
   }
 
-  let fmtDate = pubDate;
-  if (pubDate && pubDate.length === 8) fmtDate = `${pubDate.slice(0,4)}-${pubDate.slice(4,6)}-${pubDate.slice(6,8)}`;
-
   return {
-    id: noticeId || `ted-${index}`, title: title || `Avis TED ${noticeId}`,
-    authority, source, sector, budget, deadline, published: fmtDate,
-    description: description || title || 'Description non disponible',
-    keywords: [], relevanceScore, status, referenceNumber: noticeId,
-    url: `https://ted.europa.eu/en/notice/-/detail/${noticeId}`,
+    id, title: title || `Avis TED ${id}`, authority, source, sector, budget, deadline,
+    published: pubDate, description: description || title || 'Description non disponible',
+    keywords: [], relevanceScore, status, referenceNumber: id,
+    url: `https://ted.europa.eu/en/notice/-/detail/${id}`,
   };
 }
-
-function cleanXml(t) { return t.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim(); }

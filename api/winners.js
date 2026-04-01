@@ -1,92 +1,118 @@
 export default async function handler(req, res) {
   const { q = '' } = req.query;
 
-  const baseQuery = 'cpv=[79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79416000] AND TD=[7]';
+  // TD=[7] = Contract award notices; NC=services for service contracts
+  const baseQuery = 'cpv=[79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79416000] AND notice-type=can-standard';
   const fullQuery = q ? `${baseQuery} AND "${q}"` : baseQuery;
 
-  const urls = [
-    `https://ted.europa.eu/api/v3.0/notices/search?query=${encodeURIComponent(fullQuery)}&fields=ND,PD,CONTENT&pageSize=20&pageNum=1&sortField=PD&reverseOrder=true`,
-    `https://api.ted.europa.eu/v3/notices/search?query=${encodeURIComponent(fullQuery)}&fields=ND,PD,CONTENT&pageSize=20&page=1`,
-    `https://ted.europa.eu/api/v3.0/notices/search?q=${encodeURIComponent(fullQuery)}&fields=ND,PD,CONTENT&pageSize=20&pageNum=1`,
-  ];
-
-  const postBodies = [
-    { url: 'https://ted.europa.eu/api/v3.0/notices/search', body: { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, pageNum: 1 } },
-    { url: 'https://api.ted.europa.eu/v3/notices/search', body: { query: fullQuery, fields: ['ND', 'PD', 'CONTENT'], pageSize: 20, page: 1 } },
-    { url: 'https://ted.europa.eu/api/v3.0/notices/search', body: { q: fullQuery, fields: ['ND', 'PD', 'CONTENT'], scope: 3, pageSize: 20, pageNum: 1 } },
+  const bodyVariants = [
+    // 1: Full fields — contract award notices
+    {
+      query: fullQuery,
+      fields: ['publication-number', 'notice-title', 'buyer-name', 'notice-type', 'publication-date', 'notice-value', 'buyer-country', 'winner-name'],
+      limit: 20,
+      scope: 'ALL',
+      paginationMode: 'PAGE_NUMBER',
+      page: 1,
+      checkQuerySyntax: false,
+    },
+    // 2: Minimal fields
+    {
+      query: fullQuery,
+      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      limit: 20,
+      scope: 'ALL',
+      paginationMode: 'PAGE_NUMBER',
+      page: 1,
+      checkQuerySyntax: false,
+    },
+    // 3: Broader query — any award notice in services
+    {
+      query: 'notice-type=can-standard AND NC=services',
+      fields: ['publication-number', 'notice-title', 'buyer-name'],
+      limit: 20,
+      scope: 'ALL',
+      checkQuerySyntax: false,
+    },
+    // 4: Simplest possible — just award notices
+    {
+      query: 'notice-type=can-standard',
+      fields: ['publication-number'],
+      limit: 10,
+      scope: 'ALL',
+      checkQuerySyntax: false,
+    },
   ];
 
   const debugInfo = [];
 
-  for (const url of urls) {
+  for (let i = 0; i < bodyVariants.length; i++) {
     try {
-      const response = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
-      debugInfo.push({ method: 'GET', status: response.status });
-      if (response.ok) {
-        const data = await response.json();
-        const results = data.results || data.notices || [];
-        if (Array.isArray(results) && results.length > 0) {
-          const winners = results.map((n, i) => parseAward(n, i)).filter(Boolean);
-          return res.status(200).json({ winners, total: data.total || winners.length, source: 'live' });
-        }
-      }
-    } catch (e) { debugInfo.push({ method: 'GET', error: e.message }); }
-  }
+      const response = await fetch('https://api.ted.europa.eu/v3/notices/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(bodyVariants[i]),
+        signal: AbortSignal.timeout(15000),
+      });
 
-  for (const { url, body } of postBodies) {
-    try {
-      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(8000) });
-      debugInfo.push({ method: 'POST', status: response.status });
+      let responseBody = '';
+      try { responseBody = await response.text(); } catch { responseBody = 'unreadable'; }
+
+      debugInfo.push({
+        variant: i + 1,
+        status: response.status,
+        sent: bodyVariants[i],
+        response: responseBody.substring(0, 1500),
+      });
+
       if (response.ok) {
-        const data = await response.json();
-        const results = data.results || data.notices || [];
-        if (Array.isArray(results) && results.length > 0) {
-          const winners = results.map((n, i) => parseAward(n, i)).filter(Boolean);
-          return res.status(200).json({ winners, total: data.total || winners.length, source: 'live' });
+        try {
+          const data = JSON.parse(responseBody);
+          const results = data.results || data.notices || [];
+          debugInfo[debugInfo.length - 1].note = `OK — ${results.length} results, keys: ${Object.keys(data).join(',')}`;
+
+          if (Array.isArray(results) && results.length > 0) {
+            debugInfo[debugInfo.length - 1].firstResultKeys = Object.keys(results[0]);
+            debugInfo[debugInfo.length - 1].firstResult = JSON.stringify(results[0]).substring(0, 500);
+
+            const winners = results.map((n, i) => parseAward(n, i)).filter(Boolean);
+            return res.status(200).json({ winners, total: data.total || winners.length, source: 'live', workingVariant: i + 1, debug: debugInfo });
+          }
+        } catch (e) {
+          debugInfo[debugInfo.length - 1].note = 'OK but JSON parse error: ' + e.message;
         }
       }
-    } catch (e) { debugInfo.push({ method: 'POST', error: e.message }); }
+    } catch (e) {
+      debugInfo.push({ variant: i + 1, error: e.message });
+    }
   }
 
   return res.status(200).json({ winners: [], total: 0, source: 'api_unavailable', debug: debugInfo });
 }
 
 function parseAward(notice, index) {
-  const noticeId = notice.ND || notice.noticeId || notice.id || '';
-  const pubDate = notice.PD || '';
+  const id = notice['publication-number'] || notice['notice-id'] || notice.id || '';
+  const title = notice['notice-title'] || notice.title || '';
+  const authority = notice['buyer-name'] || notice.buyerName || '';
+  const name = notice['winner-name'] || '';
+  const amount = parseFloat(notice['notice-value'] || 0) || 0;
+  const pubDate = notice['publication-date'] || '';
+  const country = notice['buyer-country'] || '';
 
-  let name = '', amount = 0, tender = '', authority = '';
-
-  if (notice.content || notice.CONTENT) {
-    try {
-      const xml = Buffer.from(notice.content || notice.CONTENT, 'base64').toString('utf-8');
-      const officials = xml.match(/<OFFICIALNAME>(.*?)<\/OFFICIALNAME>/g) || [];
-      if (officials.length > 1) {
-        authority = officials[0].replace(/<\/?OFFICIALNAME>/g, '').trim();
-        name = officials[1].replace(/<\/?OFFICIALNAME>/g, '').trim();
-      } else if (officials.length === 1) {
-        authority = officials[0].replace(/<\/?OFFICIALNAME>/g, '').trim();
-      }
-      const contractorMatch = xml.match(/<CONTRACTOR[\s\S]*?<OFFICIALNAME>(.*?)<\/OFFICIALNAME>/);
-      if (contractorMatch) name = contractorMatch[1].trim();
-      const titleMatch = xml.match(/<TITLE[^>]*>\s*<P>(.*?)<\/P>/s);
-      tender = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
-      const valMatch = xml.match(/<VAL_TOTAL[^>]*>(.*?)<\/VAL_TOTAL>/);
-      amount = valMatch ? parseFloat(valMatch[1]) || 0 : 0;
-    } catch { /* ignore */ }
-  }
-
-  if (!tender && !noticeId) return null;
-
-  let formattedPubDate = pubDate;
-  if (pubDate && pubDate.length === 8) formattedPubDate = `${pubDate.slice(0,4)}-${pubDate.slice(4,6)}-${pubDate.slice(6,8)}`;
+  if (!title && !id) return null;
 
   return {
-    id: noticeId || `win-${index}`,
+    id: id || `win-${index}`,
     name: name || 'Non communiqué',
-    amount, tender: tender || `Attribution TED ${noticeId}`, authority,
-    date: formattedPubDate, website: '', linkedin: '', email: '', speciality: '',
+    amount,
+    tender: title || `Attribution TED ${id}`,
+    authority,
+    date: pubDate,
+    website: '',
+    linkedin: '',
+    email: '',
+    speciality: '',
     collaborationScore: Math.floor(Math.random() * 30) + 60,
-    noticeUrl: `https://ted.europa.eu/en/notice/-/detail/${noticeId}`,
+    noticeUrl: `https://ted.europa.eu/en/notice/-/detail/${id}`,
   };
 }
