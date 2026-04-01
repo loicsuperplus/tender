@@ -1,4 +1,4 @@
-import { Calendar, Euro, Building2, Clock, Tag } from 'lucide-react';
+import { Calendar, Euro, Building2, Clock, Tag, ExternalLink } from 'lucide-react';
 
 const sourceBadge = {
   TED: 'bg-red-50 text-red-700 border-red-200',
@@ -81,9 +81,17 @@ export default function TenderCard({ tender, index }) {
         </span>
       </div>
 
-      {/* Reference */}
-      <div className="mt-3 pt-3 border-t border-gray-50 text-left">
+      {/* Reference + Link */}
+      <div className="mt-3 pt-3 border-t border-gray-50 flex items-center justify-between">
         <span className="text-xs text-gray-400 font-mono">{tender.referenceNumber}</span>
+        <a
+          href={tender.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors"
+        >
+          <ExternalLink size={14} /> Voir l'appel
+        </a>
       </div>
     </div>
   );
