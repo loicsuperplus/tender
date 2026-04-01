@@ -13,7 +13,7 @@ export const tenders = [
     relevanceScore: 94,
     status: "open",
     referenceNumber: "TED-2026-089234",
-    url: "https://ted.europa.eu/en/notice/-/detail/2026-089234",
+    url: "https://ted.europa.eu/en/search/result?query=mobilité+campagne+Bruxelles&sortField=PUBLICATION_DATE&sortOrder=DESC",
   },
   {
     id: 2,
@@ -29,7 +29,7 @@ export const tenders = [
     relevanceScore: 89,
     status: "closing_soon",
     referenceNumber: "EP-2026-BEL-44521",
-    url: "https://www.publicprocurement.be/fr/procurement/44521",
+    url: "https://www.publicprocurement.be/fr/search/applySearch",
   },
   {
     id: 3,
@@ -45,7 +45,7 @@ export const tenders = [
     relevanceScore: 87,
     status: "open",
     referenceNumber: "TED-2026-112876",
-    url: "https://ted.europa.eu/en/notice/-/detail/2026-112876",
+    url: "https://ted.europa.eu/en/search/result?query=communication+institutionnelle+Commission+européenne&sortField=PUBLICATION_DATE&sortOrder=DESC",
   },
   {
     id: 4,
@@ -61,7 +61,7 @@ export const tenders = [
     relevanceScore: 82,
     status: "closing_soon",
     referenceNumber: "BA-2026-LG-0087",
-    url: "https://www.publicprocurement.be/fr/procurement/LG-0087",
+    url: "https://www.publicprocurement.be/fr/search/applySearch",
   },
   {
     id: 5,
@@ -77,7 +77,7 @@ export const tenders = [
     relevanceScore: 76,
     status: "open",
     referenceNumber: "EP-2026-BEL-44890",
-    url: "https://www.publicprocurement.be/fr/procurement/44890",
+    url: "https://www.publicprocurement.be/fr/search/applySearch",
   },
   {
     id: 6,
@@ -93,7 +93,7 @@ export const tenders = [
     relevanceScore: 71,
     status: "open",
     referenceNumber: "BA-2026-GNT-0234",
-    url: "https://www.publicprocurement.be/fr/procurement/GNT-0234",
+    url: "https://www.publicprocurement.be/fr/search/applySearch",
   },
   {
     id: 7,
@@ -109,7 +109,7 @@ export const tenders = [
     relevanceScore: 85,
     status: "open",
     referenceNumber: "EP-2026-BEL-44672",
-    url: "https://www.publicprocurement.be/fr/procurement/44672",
+    url: "https://ted.europa.eu/en/search/result?query=communication+climat+Antwerpen&sortField=PUBLICATION_DATE&sortOrder=DESC",
   },
 ];
 
