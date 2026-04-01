@@ -2,16 +2,15 @@ export default async function handler(req, res) {
   const { q = '' } = req.query;
 
   const TED_URL = 'https://api.ted.europa.eu/v3/notices/search';
-  // CPV codes for communication, marketing, consulting services
-  const cpvQuery = 'cpv=(79340000 OR 79341000 OR 79342000 OR 79400000 OR 79410000 OR 79411000 OR 79416000 OR 79950000)';
-  const fullQuery = q ? `${cpvQuery} AND "${q}"` : cpvQuery;
-  // Only use fields known to work from previous tests
   const safeFields = ['publication-number', 'notice-title', 'buyer-name'];
 
+  // Try different query syntaxes for CPV communication/consulting codes
   const bodyVariants = [
-    // 1: CPV filter — recent active notices only
+    // 1: CPV codes with OR syntax (no parentheses)
     {
-      query: fullQuery,
+      query: q
+        ? `(cpv=79340000 OR cpv=79341000 OR cpv=79342000 OR cpv=79400000 OR cpv=79410000 OR cpv=79411000 OR cpv=79416000 OR cpv=79950000) AND "${q}"`
+        : 'cpv=79340000 OR cpv=79341000 OR cpv=79342000 OR cpv=79400000 OR cpv=79410000 OR cpv=79411000 OR cpv=79416000 OR cpv=79950000',
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -19,9 +18,11 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: Services + date filter for recent notices
+    // 2: Use PC field (old-style CPV) with IN syntax
     {
-      query: q ? `NC=services AND PD>20250101 AND "${q}"` : 'NC=services AND PD>20250101',
+      query: q
+        ? `PC IN (79340000,79400000,79410000,79416000) AND "${q}"`
+        : 'PC IN (79340000,79400000,79410000,79416000)',
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
@@ -29,17 +30,39 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 3: Services + recent date filter (broader)
+    // 3: Use text search for communication/consulting in Belgium
     {
-      query: 'NC=services AND PD>20250301',
+      query: q
+        ? `NC=services AND organisation-country-buyer IN (BEL) AND "${q}"`
+        : 'NC=services AND organisation-country-buyer IN (BEL)',
+      fields: safeFields,
+      limit: 20,
+      scope: 'ACTIVE',
+      paginationMode: 'PAGE_NUMBER',
+      page: 1,
+      checkQuerySyntax: false,
+    },
+    // 4: Belgian services with date filter
+    {
+      query: 'NC=services AND organisation-country-buyer IN (BEL) AND PD>20250101',
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
       checkQuerySyntax: false,
     },
-    // 4: Broadest fallback with date
+    // 5: Communication keyword search — recent
     {
-      query: 'NC=services AND PD>20250101',
+      query: q
+        ? `NC=services AND PD>20250101 AND "${q}"`
+        : 'NC=services AND PD>20250101 AND (communication OR marketing OR consulting OR conseil)',
+      fields: safeFields,
+      limit: 20,
+      scope: 'ALL',
+      checkQuerySyntax: false,
+    },
+    // 6: Broadest fallback — recent services
+    {
+      query: 'NC=services AND PD>20250301',
       fields: safeFields,
       limit: 20,
       scope: 'ALL',
@@ -65,7 +88,7 @@ export default async function handler(req, res) {
         variant: i + 1,
         status: response.status,
         query: bodyVariants[i].query,
-        responsePreview: responseBody.substring(0, 300),
+        responsePreview: responseBody.substring(0, 200),
       });
 
       if (response.ok) {
