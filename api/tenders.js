@@ -44,19 +44,7 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 4: EU communication CPV — very recent
-    {
-      query: q
-        ? `${pcFilter} AND PD>20250301 AND "${q}"`
-        : `${pcFilter} AND PD>20250301`,
-      fields: safeFields,
-      limit: 20,
-      scope: 'ACTIVE',
-      paginationMode: 'PAGE_NUMBER',
-      page: 1,
-      checkQuerySyntax: false,
-    },
-    // 5: Belgian services — very recent
+    // 4: Belgian services — very recent
     {
       query: q
         ? `NC=services AND organisation-country-buyer IN (BEL) AND PD>20250301 AND "${q}"`

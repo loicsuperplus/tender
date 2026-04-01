@@ -200,4 +200,4 @@ export const sectors = [
   "Consulting & stratégie",
 ];
 
-export const sources = ["Toutes", "Belgique", "Europe"];
+export const sources = ["Belgique", "Toutes"];

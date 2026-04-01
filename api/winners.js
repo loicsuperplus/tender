@@ -18,19 +18,7 @@ export default async function handler(req, res) {
       page: 1,
       checkQuerySyntax: false,
     },
-    // 2: All EU award notices for communication CPV — 2025
-    {
-      query: q
-        ? `notice-type=can-standard AND ${pcFilter} AND PD>20250101 AND "${q}"`
-        : `notice-type=can-standard AND ${pcFilter} AND PD>20250101`,
-      fields: safeFields,
-      limit: 20,
-      scope: 'ALL',
-      paginationMode: 'PAGE_NUMBER',
-      page: 1,
-      checkQuerySyntax: false,
-    },
-    // 3: Belgian award notices — 2025
+    // 2: Belgian award notices — 2025
     {
       query: q
         ? `notice-type=can-standard AND organisation-country-buyer IN (BEL) AND PD>20250101 AND "${q}"`

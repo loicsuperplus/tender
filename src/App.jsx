@@ -13,7 +13,7 @@ let apiTotalWinners = 0;
 
 const defaultFilters = {
   search: '',
-  source: 'Toutes',
+  source: 'Belgique',
   sector: 'Tous les secteurs',
   budget: 'all',
   sort: 'relevance',
