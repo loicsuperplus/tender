@@ -37,9 +37,8 @@ export default function StatsHeader({ tenderCount, winnerCount, totalVolume }) {
     },
     {
       icon: TrendingUp,
-      label: 'Volume total',
+      label: 'Avis disponibles (TED)',
       value: totalVolume,
-      isVolume: true,
       color: 'text-emerald-600',
       bg: 'bg-emerald-50',
     },
@@ -60,9 +59,7 @@ export default function StatsHeader({ tenderCount, winnerCount, totalVolume }) {
             <span className="text-sm font-medium text-gray-500">{stat.label}</span>
           </div>
           <div className={`text-3xl font-bold ${stat.color}`}>
-            {stat.isVolume ? (
-              <AnimatedNumber target={stat.value} prefix="" suffix=" €" />
-            ) : (
+            {(
               <AnimatedNumber target={stat.value} />
             )}
           </div>

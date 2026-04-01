@@ -6,11 +6,11 @@ export default async function handler(req, res) {
   const pcFilter = '(PC=79340000 OR PC=79400000 OR PC=79410000 OR PC=79416000)';
 
   const bodyVariants = [
-    // 1: Belgian award notices for communication/consulting CPV
+    // 1: Belgian award notices for communication/consulting CPV — recent
     {
       query: q
-        ? `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL) AND "${q}"`
-        : `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL)`,
+        ? `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20240601 AND "${q}"`
+        : `notice-type=can-standard AND ${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20240601`,
       fields: safeFields,
       limit: 20,
       scope: 'ALL',

@@ -7,6 +7,10 @@ import WinnerCard from './components/WinnerCard';
 import { tenders as mockTenders, winners as mockWinners } from './data/tenders';
 import { fetchTenders, fetchWinners } from './services/api';
 
+// Store total counts from API
+let apiTotalTenders = 0;
+let apiTotalWinners = 0;
+
 const defaultFilters = {
   search: '',
   source: 'Toutes',
@@ -84,16 +88,17 @@ export default function App() {
   const loadLiveData = useCallback(async () => {
     setLoading(true);
     try {
-      const [tenderResult, winnerResult] = await Promise.all([
-        fetchTenders(),
-        fetchWinners(),
-      ]);
-
+      // Load sequentially to avoid 429 rate limiting from TED API
+      const tenderResult = await fetchTenders();
       if (tenderResult.source === 'live') {
         setTenders(tenderResult.tenders);
+        apiTotalTenders = tenderResult.total || tenderResult.tenders.length;
       }
+
+      const winnerResult = await fetchWinners();
       if (winnerResult.source === 'live') {
         setWinners(winnerResult.winners);
+        apiTotalWinners = winnerResult.total || winnerResult.winners.length;
       }
 
       setDataSource(tenderResult.source === 'live' || winnerResult.source === 'live' ? 'live' : 'mock');
@@ -110,7 +115,7 @@ export default function App() {
   const filteredTenders = useMemo(() => applyTenderFilters(tenders, tenderFilters), [tenders, tenderFilters]);
   const filteredWinners = useMemo(() => applyWinnerFilters(winners, winnerFilters), [winners, winnerFilters]);
 
-  const totalVolume = tenders.reduce((sum, t) => sum + t.budget, 0) + winners.reduce((sum, w) => sum + w.amount, 0);
+  const totalAvailable = apiTotalTenders + apiTotalWinners;
 
   return (
     <div className="min-h-screen bg-white">
@@ -175,7 +180,7 @@ export default function App() {
         <StatsHeader
           tenderCount={tenders.length}
           winnerCount={winners.length}
-          totalVolume={totalVolume}
+          totalVolume={totalAvailable}
         />
 
         {activeTab === 'tenders' ? (

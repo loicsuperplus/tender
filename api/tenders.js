@@ -7,11 +7,11 @@ export default async function handler(req, res) {
   const pcFilter = '(PC=79340000 OR PC=79341000 OR PC=79342000 OR PC=79400000 OR PC=79410000 OR PC=79411000 OR PC=79416000 OR PC=79950000)';
 
   const bodyVariants = [
-    // 1: Belgian communication/consulting CPV — BEST query
+    // 1: Belgian communication/consulting CPV — BEST query — recent
     {
       query: q
-        ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND "${q}"`
-        : `${pcFilter} AND organisation-country-buyer IN (BEL)`,
+        ? `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20240601 AND "${q}"`
+        : `${pcFilter} AND organisation-country-buyer IN (BEL) AND PD>20240601`,
       fields: safeFields,
       limit: 20,
       scope: 'ACTIVE',
